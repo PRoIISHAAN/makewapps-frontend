@@ -1,0 +1,551 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+import { WebContainer } from "@webcontainer/api";
+import {
+  type Step,
+  type FileMessage,
+  type FileTreeNode,
+  StepType,
+} from "../types/types.ts";
+import { ChatPanel } from "../Components/Chat/ChatPanel";
+import { FileExplorer } from "../Components/Chat/FileExplorer";
+import { CodeEditor } from "../Components/Chat/CodeEditor";
+import { Preview } from "../Components/Chat/Preview";
+import { generateSteps } from "../utils/fileGenerator";
+import { applyStepToFileTree } from "../utils/fileTree";
+import { Panel, Group, Separator } from "react-resizable-panels";
+import { Zap, FolderOpen, Eye, Code } from "lucide-react";
+import { BACKEND_URL } from "../config.ts";
+import { StreamingXmlParser } from "../utils/utils.ts";
+import { Queue } from "../utils/Queue.ts";
+import * as Diff from "diff";
+
+export function ChatPage() {
+  const [iFrameUrl, setIframeUrl] = useState("");
+  const [, setTitle] = useState("");
+  const userPromptsRef = useRef<string[]>([]);
+  const editorref = useRef<any>(null);
+  const runCommandRef = useRef<Boolean>(false);
+  const ApplyingToFileTreeRef = useRef(false);
+  const llmFileContentsRef = useRef<Record<string, string>>({});
+  const webcontainerRef = useRef<WebContainer | null>(null);
+  const [messages, setMessages] = useState<FileMessage[]>([
+    {
+      id: "1",
+      role: "assistant",
+      content:
+        "Hi! I'm your AI website builder. Describe the website you want to create, and I'll generate the files for you.",
+      timestamp: new Date(),
+    },
+  ]);
+
+  const buildFileModifications = (): string => {
+    const modifiedFiles: string[] = [];
+
+    const collectFiles = (nodes: FileTreeNode[]) => {
+      for (const node of nodes) {
+        if (node.type === "file" && node.content !== undefined) {
+          const llmVersion = llmFileContentsRef.current[node.path];
+
+          if (llmVersion !== undefined && node.content !== llmVersion) {
+            const diffResult = Diff.createPatch(
+              node.path,
+              llmVersion,
+              node.content,
+              "",
+              "",
+            );
+
+            // Strip the 4-line header bolt.new omits (---, +++, @@... is kept)
+            const lines = diffResult.split("\n");
+            const stripped = lines.slice(4).join("\n");
+
+            if (stripped.length > node.content.length) {
+              modifiedFiles.push(
+                `<file path="${node.path}">\n${node.content}\n</file>`,
+              );
+            } else {
+              modifiedFiles.push(
+                `<diff path="${node.path}">\n${stripped}\n</diff>`,
+              );
+            }
+          }
+        }
+        if (node.type === "folder" && node.children) {
+          collectFiles(node.children);
+        }
+      }
+    };
+
+    collectFiles(filesRef.current);
+
+    if (modifiedFiles.length === 0) return "";
+    return `<fileModifications>\n${modifiedFiles.join("\n")}\n</fileModifications>`;
+  };
+
+  const npmInstall = async () => {
+    if (webcontainerRef.current) {
+      const process = await webcontainerRef.current.spawn("npm", ["install"]);
+      process.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            console.log(data);
+          },
+        }),
+      );
+      await process.exit;
+    }
+  };
+  const npmRun = async () => {
+    if (webcontainerRef.current) {
+      await npmInstall();
+      const process = await webcontainerRef.current.spawn("npm", [
+        "run",
+        "start",
+      ]);
+      process.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            console.log(data);
+          },
+        }),
+      );
+      webcontainerRef.current.on("server-ready", (_, url) => {
+        setIframeUrl(url);
+      });
+      return;
+    }
+  };
+  const [steps, setSteps] = useState<Step[]>([]);
+  const stepsRef = useRef<Step[]>([]);
+  const [files, setFiles] = useState<FileTreeNode[]>([]);
+  const filesRef = useRef<FileTreeNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const selectedFileRef = useRef<string | null>(null);
+  const [viewMode, setViewMode] = useState<"code" | "preview">("preview");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const stepsQueueRef = useRef(new Queue<Step>());
+  const assistantMessageIdRef = useRef<string | null>(null);
+  const assistantNarrationRef = useRef<string>("");
+
+  const updateAssistantMessageContent = (content: string) => {
+    if (!assistantMessageIdRef.current) {
+      const assistantMessageId = (Date.now() + 1).toString();
+      assistantMessageIdRef.current = assistantMessageId;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMessageIdRef.current!,
+          role: "assistant",
+          content,
+          timestamp: new Date(),
+          steps: [],
+        },
+      ]);
+      return;
+    }
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === assistantMessageIdRef.current ? { ...msg, content } : msg,
+      ),
+    );
+  };
+
+  function updateFileContent(
+    nodes: FileTreeNode[],
+    path: string,
+    content: string,
+  ): FileTreeNode[] {
+    return nodes.map((node) => {
+      if (node.type === "file" && node.path === path) {
+        return { ...node, content };
+      }
+      if (node.type === "folder" && node.children) {
+        return {
+          ...node,
+          children: updateFileContent(node.children, path, content),
+        };
+      }
+      return node;
+    });
+  }
+
+  useEffect(() => {
+    const assistantMessageId = assistantMessageIdRef.current;
+    if (!assistantMessageId) return;
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === assistantMessageId ? { ...msg, steps } : msg,
+      ),
+    );
+  }, [steps]);
+
+  const isApplyingCompleteRef = useRef(false);
+  const pendingApplyCompleteRef = useRef(false);
+
+  const runStep = async (step: Step) => {
+    if (step.type === StepType.Composite) {
+      for (const childStep of step.steps ?? []) {
+        await runStep(childStep);
+      }
+      return;
+    }
+
+    if (
+      step.type === StepType.RunScript &&
+      step.code &&
+      webcontainerRef.current
+    ) {
+      console.log("Running command:", step.code);
+      for (const code of step.code.split("&&")) {
+        const [cmd, ...args] = code.trim().split(" ");
+        if (
+          (args[0] === "run" || args[0] === "start") &&
+          runCommandRef.current === false
+        ) {
+          runCommandRef.current = true;
+          await npmRun();
+          return;
+        }
+        if (args[0] === "install") {
+          await npmInstall();
+          return;
+        }
+        const process = await webcontainerRef.current.spawn(cmd, args);
+        process.output.pipeTo(
+          new WritableStream({
+            write(data) {
+              console.log(data);
+            },
+          }),
+        );
+        await process.exit;
+      }
+    }
+
+    await applyStepToFileTree(
+      filesRef,
+      setFiles,
+      step,
+      webcontainerRef.current!,
+    );
+  };
+
+  const applyCompleted = async (steps: Step[]) => {
+    if (isApplyingCompleteRef.current) {
+      pendingApplyCompleteRef.current = true;
+      return;
+    }
+    isApplyingCompleteRef.current = true;
+    if (!webcontainerRef.current) {
+      const webcontainerInstance = await WebContainer.boot();
+      webcontainerRef.current = webcontainerInstance;
+    }
+    for (const step of steps) {
+      if(step.status === "isStreaming"){
+        pendingApplyCompleteRef.current = false;
+        break;
+      }
+      if (step.status !== "pending") {
+        continue;
+      }
+
+      try {
+        stepsRef.current = stepsRef.current.map((s) =>
+          s.id === step.id ? { ...s, status: "in-progress" } : s,
+        );
+        setSteps(stepsRef.current);
+
+        await runStep(step);
+        stepsRef.current = stepsRef.current.map((s) =>
+          s.id === step.id ? { ...s, status: "completed" } : s,
+        );
+        setSteps(stepsRef.current);
+      } catch (err) {
+        console.error("Step execution error:", err);
+        stepsRef.current = stepsRef.current.map((s) =>
+          s.id === step.id ? { ...s, status: "error" } : s,
+        );
+        setSteps(stepsRef.current);
+      }
+    }
+
+    isApplyingCompleteRef.current = false;
+    if (pendingApplyCompleteRef.current) {
+      pendingApplyCompleteRef.current = false;
+      await applyCompleted(stepsRef.current);
+    }
+  };
+
+  const handleSendMessage = async (content: string) => {
+    const userMessage: FileMessage = {
+      id: Date.now().toString(),
+      role: "user",
+      content,
+      timestamp: new Date(),
+    };
+    assistantNarrationRef.current = "";
+    assistantMessageIdRef.current = null;
+    setMessages((prev) => [...prev, userMessage]);
+
+    setIsGenerating(true);
+
+    if (stepsRef.current.length === 0) {
+      const templateApiResponse = await generateSteps(content);
+      const templateSteps = templateApiResponse.steps;
+      userPromptsRef.current = [
+        ...userPromptsRef.current,
+        ...templateApiResponse.prompts,
+      ];
+      stepsRef.current = templateSteps;
+      setSteps(stepsRef.current);
+
+      applyCompleted(stepsRef.current);
+      for (const step of stepsRef.current) {
+        if (step.path && step.code) {
+          llmFileContentsRef.current[step.path] = step.code;
+        }
+      }
+    }
+
+    const nextStepId =
+      stepsRef.current.length > 0 ? stepsRef.current.length + 1 : 1;
+
+    const parser = new StreamingXmlParser(
+      nextStepId,
+      async (step) => {
+        stepsRef.current = [...stepsRef.current, step];
+        setSteps(stepsRef.current);
+        if (
+          (step.type === StepType.CreateFile ||
+            step.type === StepType.CreateFolder) &&
+          webcontainerRef.current
+        ) {
+          stepsQueueRef.current.enqueue(step);
+          if (ApplyingToFileTreeRef.current) return; // avoid concurrent modifications to file tree
+          while (!stepsQueueRef.current.isEmpty) {
+            ApplyingToFileTreeRef.current = true;
+            const step = stepsQueueRef.current.dequeue();
+            await applyStepToFileTree(
+              filesRef,
+              setFiles,
+              step as Step,
+              webcontainerRef.current,
+            );
+            if (step?.path) {
+              selectedFileRef.current = step.path;
+              setSelectedFile(selectedFileRef.current);
+            }
+            setViewMode("code");
+          }
+          ApplyingToFileTreeRef.current = false;
+        }
+      },
+      (stepId, code) => {
+        stepsRef.current = stepsRef.current.map((s) =>
+          s.id === stepId ? { ...s, code } : s,
+        );
+        setSteps(stepsRef.current);
+
+        const step = stepsRef.current.find((s) => s.id === stepId);
+        if (step?.path) {
+          llmFileContentsRef.current[step.path] = code;
+          const nextFiles = updateFileContent(
+            filesRef.current,
+            step.path,
+            code,
+          );
+          filesRef.current = nextFiles;
+          setFiles(nextFiles);
+        }
+      },
+      async (id) => {
+        stepsRef.current = stepsRef.current.map((s) =>
+          s.id === id ? { ...s, status: "pending" } : s,
+        );
+        await applyCompleted(stepsRef.current);
+      },
+      (text) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+
+        assistantNarrationRef.current += text;
+        updateAssistantMessageContent(assistantNarrationRef.current.trim());
+      },
+      setTitle,
+    );
+    const fileModifications = buildFileModifications();
+    const userMessageContent = fileModifications
+      ? `${fileModifications}\n\n${content}`
+      : content;
+    const response = await fetch(`${BACKEND_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompts: [
+          ...userPromptsRef.current,
+          filesRef.current.length > 0
+            ? `current file tree: ${JSON.stringify(filesRef.current)}`
+            : "",
+          userMessageContent
+        ].filter(Boolean),
+        messages
+      }),
+    });
+
+    if (!response.body) {
+      console.error("No response body — is the backend streaming?");
+      setIsGenerating(false);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.feed(decoder.decode(value, { stream: true }));
+    }
+
+    setIsGenerating(false);
+    setViewMode("preview");
+  };
+
+  const handleFileSelect = useCallback((path: string) => {
+    setViewMode("code");
+    setSelectedFile(path);
+  }, []);
+
+  const handleFileUpdate = useCallback((path: string, content: string) => {
+    const updateFile = (nodes: FileTreeNode[]): FileTreeNode[] =>
+      nodes.map((node) => {
+        if (node.path === path && node.type === "file")
+          return { ...node, content };
+        if (node.type === "folder" && node.children)
+          return { ...node, children: updateFile(node.children) };
+        return node;
+      });
+    filesRef.current = updateFile(filesRef.current);
+    setFiles(filesRef.current);
+  }, []);
+
+  const getSelectedFileContent = () => {
+    const findFile = (nodes: FileTreeNode[], path: string): string => {
+      for (const node of nodes) {
+        if (node.path === path && node.type === "file")
+          return node.content ?? "";
+        if (node.type === "folder" && node.children) {
+          const found = findFile(node.children, path);
+          if (found) return found;
+        }
+      }
+      return "";
+    };
+    return selectedFile ? findFile(files, selectedFile) : "";
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden">
+      <Group orientation="horizontal" className="flex-1">
+        <Panel
+          defaultSize={300}
+          minSize={200}
+          maxSize={400}
+          className="flex flex-col border-r border-slate-700/50 bg-slate-900"
+        >
+          <header className="px-6 py-4 border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                <Zap className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold text-white">
+                  Website Builder
+                </h1>
+                <p className="text-xs text-slate-400">
+                  Create websites with AI
+                </p>
+              </div>
+            </div>
+          </header>
+
+          <ChatPanel
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            isGenerating={isGenerating}
+          />
+        </Panel>
+
+        <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
+
+        <Panel className="flex flex-col">
+          <header className="h-14 px-4 flex items-center justify-between border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <FolderOpen className="w-5 h-5 text-slate-400" />
+              <h2 className="text-sm font-medium text-slate-300">Explorer</h2>
+              {files.length > 0 && (
+                <span className="ml-2 px-2 py-0.5 text-xs bg-emerald-500/20 text-emerald-400 rounded-full">
+                  {files.filter((f) => f.type === "file").length} files
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 bg-slate-700/50 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode("preview")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === "preview"
+                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Eye className="w-4 h-4" />
+                  Preview
+                </div>
+              </button>
+              <button
+                onClick={() => setViewMode("code")}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === "code"
+                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Code className="w-4 h-4" />
+                  Code
+                </div>
+              </button>
+            </div>
+          </header>
+
+          <Group orientation="horizontal" className="flex-1">
+            <Panel defaultSize={350} minSize={250} maxSize={400}>
+              <FileExplorer
+                files={files}
+                selectedFile={selectedFile}
+                onFileSelect={handleFileSelect}
+              />
+            </Panel>
+
+            <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
+
+            <Panel className="overflow-hidden">
+              <Preview viewmode={viewMode} url={iFrameUrl} />
+              <CodeEditor
+                viewmode={viewMode}
+                filePath={selectedFile}
+                content={getSelectedFileContent()}
+                onContentChange={handleFileUpdate}
+                editorref={editorref}
+              />
+            </Panel>
+          </Group>
+        </Panel>
+      </Group>
+    </div>
+  );
+}

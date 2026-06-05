@@ -1,0 +1,157 @@
+import { useEffect, useRef } from 'react';
+import Editor from '@monaco-editor/react';
+import { Code2 } from 'lucide-react';
+
+interface CodeEditorProps {
+  filePath: string | null;
+  content: string;
+  editorref: React.RefObject<any>;
+  viewmode: string;
+  onContentChange: (path: string, content: string) => void;
+}
+
+export function CodeEditor({ filePath, content, onContentChange, editorref, viewmode }: CodeEditorProps) {
+  const editorInstanceRef = useRef<any>(null);
+
+  const scrollToBottom = () => {
+    const editor = editorInstanceRef.current;
+    if (!editor) return;
+
+    const model = editor.getModel?.();
+    if (!model) return;
+
+    const lastLine = model.getLineCount();
+    requestAnimationFrame(() => {
+      editor.revealLineInCenterIfOutsideViewport?.(lastLine);
+      editor.revealLine?.(lastLine);
+    });
+  };
+
+  useEffect(() => {
+    const editor = editorInstanceRef.current;
+    if (!editor) return;
+
+    const model = editor.getModel?.();
+    if (!model) return;
+
+    if (model.getValue() !== content) {
+      editor.setValue(content);
+      scrollToBottom();
+    }
+  }, [content]);
+
+  const handleEditorDidMount = (editor: any, monaco: any) => {
+    try {
+      // attach monaco namespace to the editor instance for convenience
+      (editor as any).monaco = monaco;
+    } catch (err) {
+      // ignore
+    }
+    editorInstanceRef.current = editor;
+    editorref.current = editor;
+    editor.onDidChangeModelContent(() => {
+      scrollToBottom();
+    });
+  };
+  if (!filePath) {
+    return (
+      <div className={`h-full flex items-center justify-center bg-slate-900 ${viewmode === "preview" ? "hidden" : "block"}`}>
+        <div className="text-center px-8">
+          <div className="w-20 h-20 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-5">
+            <Code2 className="w-10 h-10 text-slate-600" />
+          </div>
+          <p className="text-slate-400 text-lg font-medium">No file selected</p>
+          <p className="text-slate-600 text-sm mt-2">
+            Choose a file from the explorer to view or edit it
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const getLanguage = (): string => {
+    const ext = filePath.split('.').pop();
+    switch (ext) {
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'js':
+        return 'javascript';
+      case 'ts':
+      case 'tsx':
+        return 'typescript';
+      case 'json':
+        return 'json';
+      case 'md':
+        return 'markdown';
+      default:
+        return 'plaintext';
+    }
+  };
+
+  const handleChange = (value: string | undefined) => {
+    if (value !== undefined) {
+      onContentChange(filePath, value);
+    }
+  };
+
+  const fileName = filePath.split('/').pop() || filePath;
+
+  return (
+    <div className={`h-full flex flex-col bg-slate-900 overflow-hidden ${viewmode === "preview" ? "hidden" : "block"}`}>
+      {/* Tab Bar */}
+      <div className="h-10 bg-slate-800/70 border-b border-slate-700/50 flex items-center px-3 flex-shrink-0">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 rounded-t-md text-sm text-slate-300 border-t border-x border-slate-700/50 -mb-px">
+          <Code2 className="w-3.5 h-3.5 text-slate-500" />
+          <span>{fileName}</span>
+          <span className="text-xs text-slate-500 px-2 py-0.5 bg-slate-800 rounded">
+            {getLanguage().toUpperCase()}
+          </span>
+        </div>
+      </div>
+
+      {/* Monaco Editor */}
+      <div className="flex-1 overflow-hidden">
+        <Editor
+          height="100%"
+          language={getLanguage()}
+          value={content}
+          onChange={handleChange}
+          onMount={handleEditorDidMount}
+          theme="vs-dark"
+          options={{
+            minimap: { enabled: false },
+            fontSize: 14,
+            fontFamily: "'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace",
+            fontLigatures: true,
+            lineNumbers: 'on',
+            renderLineHighlight: 'line',
+            scrollBeyondLastLine: false,
+            automaticLayout: true,
+            tabSize: 2,
+            wordWrap: 'on',
+            padding: { top: 16, bottom: 16 },
+            smoothScrolling: true,
+            cursorBlinking: 'smooth',
+            cursorSmoothCaretAnimation: 'on',
+            scrollbar: {
+              vertical: 'visible',
+              horizontal: 'visible',
+              verticalScrollbarSize: 12,
+              horizontalScrollbarSize: 12,
+            },
+            overviewRulerBorder: false,
+            hideCursorInOverviewRuler: true,
+            overviewRulerLanes: 0,
+            bracketPairColorization: {
+              enabled: true,
+            },
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+export default CodeEditor;
