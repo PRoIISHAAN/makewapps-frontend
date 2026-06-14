@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { WebContainer } from "@webcontainer/api";
 import {
   type Step,
@@ -127,29 +127,49 @@ export function ChatPage() {
   const assistantMessageIdRef = useRef<string | null>(null);
   const assistantNarrationRef = useRef<string>("");
 
-  const updateAssistantMessageContent = (content: string) => {
-    if (!assistantMessageIdRef.current) {
-      const assistantMessageId = (Date.now() + 1).toString();
-      assistantMessageIdRef.current = assistantMessageId;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantMessageIdRef.current!,
-          role: "assistant",
-          content,
-          timestamp: new Date(),
-          steps: [],
-        },
-      ]);
-      return;
-    }
+const ensureAssistantMessage = () => {
+  if (assistantMessageIdRef.current) return;
+
+  const id = (Date.now() + 1).toString();
+  assistantMessageIdRef.current = id;
+  setMessages((prev) => [
+    ...prev,
+    {
+      id,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      steps: [],
+    },
+  ]);
+};
+
+  const updateSteps = (newSteps: Step[]) => {
+    stepsRef.current = newSteps;
+    setSteps(newSteps);
+
+    ensureAssistantMessage();
+
+    if (!assistantMessageIdRef.current) return;
 
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.id === assistantMessageIdRef.current ? { ...msg, content } : msg,
+        msg.id === assistantMessageIdRef.current
+          ? { ...msg, steps: newSteps }
+          : msg,
       ),
     );
   };
+
+  const updateAssistantMessageContent = (content: string) => {
+  ensureAssistantMessage();
+
+  setMessages((prev) =>
+    prev.map((msg) =>
+      msg.id === assistantMessageIdRef.current ? { ...msg, content } : msg,
+    ),
+  );
+};
 
   function updateFileContent(
     nodes: FileTreeNode[],
@@ -169,17 +189,6 @@ export function ChatPage() {
       return node;
     });
   }
-
-  useEffect(() => {
-    const assistantMessageId = assistantMessageIdRef.current;
-    if (!assistantMessageId) return;
-
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === assistantMessageId ? { ...msg, steps } : msg,
-      ),
-    );
-  }, [steps]);
 
   const isApplyingCompleteRef = useRef(false);
   const pendingApplyCompleteRef = useRef(false);
@@ -243,7 +252,7 @@ export function ChatPage() {
       webcontainerRef.current = webcontainerInstance;
     }
     for (const step of steps) {
-      if(step.status === "isStreaming"){
+      if (step.status === "isStreaming") {
         pendingApplyCompleteRef.current = false;
         break;
       }
@@ -252,22 +261,25 @@ export function ChatPage() {
       }
 
       try {
-        stepsRef.current = stepsRef.current.map((s) =>
-          s.id === step.id ? { ...s, status: "in-progress" } : s,
+        updateSteps(
+          stepsRef.current.map((s) =>
+            s.id === step.id ? { ...s, status: "in-progress" } : s,
+          ),
         );
-        setSteps(stepsRef.current);
 
         await runStep(step);
-        stepsRef.current = stepsRef.current.map((s) =>
-          s.id === step.id ? { ...s, status: "completed" } : s,
+        updateSteps(
+          stepsRef.current.map((s) =>
+            s.id === step.id ? { ...s, status: "completed" } : s,
+          ),
         );
-        setSteps(stepsRef.current);
       } catch (err) {
         console.error("Step execution error:", err);
-        stepsRef.current = stepsRef.current.map((s) =>
-          s.id === step.id ? { ...s, status: "error" } : s,
+        updateSteps(
+          stepsRef.current.map((s) =>
+            s.id === step.id ? { ...s, status: "error" } : s,
+          ),
         );
-        setSteps(stepsRef.current);
       }
     }
 
@@ -298,8 +310,7 @@ export function ChatPage() {
         ...userPromptsRef.current,
         ...templateApiResponse.prompts,
       ];
-      stepsRef.current = templateSteps;
-      setSteps(stepsRef.current);
+      updateSteps(templateSteps);
 
       applyCompleted(stepsRef.current);
       for (const step of stepsRef.current) {
@@ -315,8 +326,7 @@ export function ChatPage() {
     const parser = new StreamingXmlParser(
       nextStepId,
       async (step) => {
-        stepsRef.current = [...stepsRef.current, step];
-        setSteps(stepsRef.current);
+        updateSteps([...stepsRef.current, step]);
         if (
           (step.type === StepType.CreateFile ||
             step.type === StepType.CreateFolder) &&
@@ -343,10 +353,9 @@ export function ChatPage() {
         }
       },
       (stepId, code) => {
-        stepsRef.current = stepsRef.current.map((s) =>
-          s.id === stepId ? { ...s, code } : s,
+        updateSteps(
+          stepsRef.current.map((s) => (s.id === stepId ? { ...s, code } : s)),
         );
-        setSteps(stepsRef.current);
 
         const step = stepsRef.current.find((s) => s.id === stepId);
         if (step?.path) {
@@ -361,8 +370,10 @@ export function ChatPage() {
         }
       },
       async (id) => {
-        stepsRef.current = stepsRef.current.map((s) =>
-          s.id === id ? { ...s, status: "pending" } : s,
+        updateSteps(
+          stepsRef.current.map((s) =>
+            s.id === id ? { ...s, status: "pending" } : s,
+          ),
         );
         await applyCompleted(stepsRef.current);
       },
@@ -388,9 +399,9 @@ export function ChatPage() {
           filesRef.current.length > 0
             ? `current file tree: ${JSON.stringify(filesRef.current)}`
             : "",
-          userMessageContent
+          userMessageContent,
         ].filter(Boolean),
-        messages
+        messages,
       }),
     });
 

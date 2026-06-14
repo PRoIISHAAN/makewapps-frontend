@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
-import { twMerge } from "tailwind-merge"
-import { type Step, StepType } from '../types/types';
+import { twMerge } from "tailwind-merge";
+import { type Step, StepType } from "../types/types";
 
 export function cn(...inputs: Parameters<typeof clsx>) {
   return twMerge(clsx(inputs));
@@ -10,9 +10,11 @@ interface ParseXmlOptions {
   groupInitialFiles?: boolean;
 }
 
-const normalizeCommand = (command: string) => command.trim().replace(/\s+/g, " ");
+const normalizeCommand = (command: string) =>
+  command.trim().replace(/\s+/g, " ");
 
-const isInstallCommand = (command: string) => normalizeCommand(command) === "npm install";
+const isInstallCommand = (command: string) =>
+  normalizeCommand(command) === "npm install";
 
 const isRunServerCommand = (command: string) => {
   const normalized = normalizeCommand(command);
@@ -31,79 +33,95 @@ const getShellStepTitle = (command: string) => {
   return `Run Command: ${command}`;
 };
 
-export function parseXml(response: string, options: ParseXmlOptions = {}): Step[] {
-    // Extract the XML content between <MakeWappsArtifact> tags
-    const xmlMatch = response.match(/<MakeWappsArtifact[^>]*>([\s\S]*?)<\/MakeWappsArtifact>/);
-    
-    if (!xmlMatch) {
-      return [];
-    }
-  
-    const xmlContent = xmlMatch[1];
-    const steps: Step[] = [];
-    let stepId = 1;
-  
-    // Regular expression to find MakeWappsAction elements
-    const actionRegex = /<MakeWappsAction\s+type="([^"]*)"(?:\s+filePath="([^"]*)")?>([\s\S]*?)<\/MakeWappsAction>/g;
-    
-    let match;
-    while ((match = actionRegex.exec(xmlContent)) !== null) {
-      const [, type, filePath, content] = match;
-  
-      if (type === 'file') {
-        // File creation step
-        steps.push({
-          id: stepId++,
-          title: `Create ${filePath || 'file'}`,
-          description: '',
-          type: StepType.CreateFile,
-          status: 'pending',
-          code: content.trim(),
-          path: filePath || undefined
-        });
-      } else if (type === 'shell') {
-        // Shell command step
-        steps.push({
-          id: stepId++,
-          title: getShellStepTitle(content.trim()),
-          description: '',
-          type: StepType.RunScript,
-          status: 'pending',
-          code: content.trim()
-        });
-      }
-    }
+export function parseXml(
+  response: string,
+  options: ParseXmlOptions = {},
+): Step[] {
+  // Extract the XML content between <MakeWappsArtifact> tags
+  const xmlMatch = response.match(
+    /<MakeWappsArtifact[^>]*>([\s\S]*?)<\/MakeWappsArtifact>/,
+  );
 
-    if (options.groupInitialFiles) {
-      const installStep = steps.find(
-        (step) => step.type === StepType.RunScript && step.code && isInstallCommand(step.code),
-      );
-      const runServerStep = steps.find(
-        (step) => step.type === StepType.RunScript && step.code && isRunServerCommand(step.code),
-      );
-      const initialFileSteps = steps.filter(
-        (step) =>
-          step.type !== StepType.RunScript ||
-          !step.code ||
-          (!isInstallCommand(step.code) && !isRunServerCommand(step.code)),
-      );
-
-      return [
-        {
-          id: 1,
-          title: "Create initial files",
-          description: "",
-          type: StepType.Composite,
-          status: "pending",
-          steps: initialFileSteps,
-        },
-        ...(installStep ? [{ ...installStep, id: 2, title: "Install dependencies" }] : []),
-        ...(runServerStep ? [{ ...runServerStep, id: installStep ? 3 : 2, title: "Run server" }] : []),
-      ];
-    }
-  
-    return steps;
+  if (!xmlMatch) {
+    return [];
   }
+
+  const xmlContent = xmlMatch[1];
+  const steps: Step[] = [];
+  let stepId = 1;
+
+  // Regular expression to find MakeWappsAction elements
+  const actionRegex =
+    /<MakeWappsAction\s+type="([^"]*)"(?:\s+filePath="([^"]*)")?>([\s\S]*?)<\/MakeWappsAction>/g;
+
+  let match;
+  while ((match = actionRegex.exec(xmlContent)) !== null) {
+    const [, type, filePath, content] = match;
+
+    if (type === "file") {
+      // File creation step
+      steps.push({
+        id: stepId++,
+        title: `Create ${filePath || "file"}`,
+        description: "",
+        type: StepType.CreateFile,
+        status: "pending",
+        code: content.trim(),
+        path: filePath || undefined,
+      });
+    } else if (type === "shell") {
+      // Shell command step
+      steps.push({
+        id: stepId++,
+        title: getShellStepTitle(content.trim()),
+        description: "",
+        type: StepType.RunScript,
+        status: "pending",
+        code: content.trim(),
+      });
+    }
+  }
+
+  if (options.groupInitialFiles) {
+    const installStep = steps.find(
+      (step) =>
+        step.type === StepType.RunScript &&
+        step.code &&
+        isInstallCommand(step.code),
+    );
+    const runServerStep = steps.find(
+      (step) =>
+        step.type === StepType.RunScript &&
+        step.code &&
+        isRunServerCommand(step.code),
+    );
+    const initialFileSteps = steps.filter(
+      (step) =>
+        step.type !== StepType.RunScript ||
+        !step.code ||
+        (!isInstallCommand(step.code) && !isRunServerCommand(step.code)),
+    );
+
+    return [
+      {
+        id: 1,
+        title: "Create initial files",
+        description: "",
+        type: StepType.Composite,
+        status: "pending",
+        steps: initialFileSteps,
+      },
+      ...(installStep
+        ? [{ ...installStep, id: 2, title: "Install dependencies" }]
+        : []),
+      ...(runServerStep
+        ? [{ ...runServerStep, id: installStep ? 3 : 2, title: "Run server" }]
+        : []),
+    ];
+  }
+
+  return steps;
+}
 
 export type StepCallback = (step: Step) => void;
 export type StepUpdateCallback = (stepId: number, code: string) => void;
@@ -135,7 +153,7 @@ export class StreamingXmlParser {
     onStepContentUpdate: StepUpdateCallback,
     onStepComplete: StepCompleteCallback,
     onNarrationUpdate?: NarrationCallback,
-    onArtifactTitle?: ArtifactTitleCallback
+    onArtifactTitle?: ArtifactTitleCallback,
   ) {
     this.stepId = startingStepId;
     this.onStepCreated = onStepCreated;
@@ -152,7 +170,10 @@ export class StreamingXmlParser {
     if (!this.insideArtifact) {
       const artifactOpen = this.buffer.match(/<MakeWappsArtifact([^>]*)>/);
       if (artifactOpen) {
-        const narrationPrefix = this.buffer.slice(0, this.buffer.indexOf(artifactOpen[0]));
+        const narrationPrefix = this.buffer.slice(
+          0,
+          this.buffer.indexOf(artifactOpen[0]),
+        );
         if (narrationPrefix.trim()) {
           this.onNarrationUpdate?.(narrationPrefix);
         }
@@ -163,7 +184,7 @@ export class StreamingXmlParser {
         this.insideArtifact = true;
 
         this.buffer = this.buffer.slice(
-          this.buffer.indexOf(artifactOpen[0]) + artifactOpen[0].length
+          this.buffer.indexOf(artifactOpen[0]) + artifactOpen[0].length,
         );
       } else {
         const firstTagStart = this.buffer.indexOf("<");
@@ -196,11 +217,12 @@ export class StreamingXmlParser {
         this.currentStepId = this.stepId++;
 
         // Emit step immediately so file is created before content arrives
-        const step = this.buildStep(this.currentStepId, "");
-        if (step) this.onStepCreated(step);
-
+        if (this.currentActionType === "file") {
+          const step = this.buildStep(this.currentStepId, "");
+          if (step) this.onStepCreated(step);
+        }
         this.buffer = this.buffer.slice(
-          this.buffer.indexOf(actionOpen[0]) + actionOpen[0].length
+          this.buffer.indexOf(actionOpen[0]) + actionOpen[0].length,
         );
       }
     }
@@ -210,18 +232,27 @@ export class StreamingXmlParser {
       const closeIdx = this.buffer.indexOf("</MakeWappsAction>");
 
       if (closeIdx !== -1) {
-        // Full content received
         this.currentContent += this.buffer.slice(0, closeIdx);
         this.buffer = this.buffer.slice(closeIdx + "</MakeWappsAction>".length);
         this.insideAction = false;
 
-        // Final update + mark is streaming => pending
-        this.onStepContentUpdate(this.currentStepId, this.currentContent.trim());
+        const trimmed = this.currentContent.trim();
+        this.onStepContentUpdate(this.currentStepId, trimmed);
+
+        // Emit shell steps now that we have the full command
+        if (this.currentActionType === "shell") {
+          const step = this.buildStep(this.currentStepId, trimmed);
+          if (step) this.onStepCreated(step);
+        }
+
         this.onStepComplete(this.currentStepId);
         this.currentStepId = null;
       } else {
         // Still streaming — hold back enough chars to catch a split closing tag
-        const safeLen = Math.max(0, this.buffer.length - "</MakeWappsAction>".length);
+        const safeLen = Math.max(
+          0,
+          this.buffer.length - "</MakeWappsAction>".length,
+        );
         if (safeLen > 0) {
           this.currentContent += this.buffer.slice(0, safeLen);
           // 🔴 Live update — file content grows as stream arrives
