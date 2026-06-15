@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
-import Editor from '@monaco-editor/react';
-import { Code2 } from 'lucide-react';
+import { useEffect, useRef } from "react";
+import Editor from "@monaco-editor/react";
+import { Code2 } from "lucide-react";
+import type { FileTreeNode } from "../../types/types";
+import { Group, Panel, Separator } from "react-resizable-panels";
+import { FileExplorer } from "./FileExplorer";
 
 interface CodeEditorProps {
   filePath: string | null;
@@ -8,9 +11,23 @@ interface CodeEditorProps {
   editorref: React.RefObject<any>;
   viewmode: string;
   onContentChange: (path: string, content: string) => void;
+  files: FileTreeNode[];
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+  terminalRef: React.RefObject<HTMLDivElement> | React.RefObject<null>
 }
 
-export function CodeEditor({ filePath, content, onContentChange, editorref, viewmode }: CodeEditorProps) {
+export function CodeEditor({
+  filePath,
+  content,
+  onContentChange,
+  editorref,
+  viewmode,
+  files,
+  selectedFile,
+  onFileSelect,
+  terminalRef,
+}: CodeEditorProps) {
   const editorInstanceRef = useRef<any>(null);
 
   const scrollToBottom = () => {
@@ -55,7 +72,9 @@ export function CodeEditor({ filePath, content, onContentChange, editorref, view
   };
   if (!filePath) {
     return (
-      <div className={`h-full flex items-center justify-center bg-slate-900 ${viewmode === "preview" ? "hidden" : "block"}`}>
+      <div
+        className={`h-full flex items-center justify-center bg-slate-900 ${viewmode === "code" ? "block" : "hidden"}`}
+      >
         <div className="text-center px-8">
           <div className="w-20 h-20 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-5">
             <Code2 className="w-10 h-10 text-slate-600" />
@@ -70,23 +89,23 @@ export function CodeEditor({ filePath, content, onContentChange, editorref, view
   }
 
   const getLanguage = (): string => {
-    const ext = filePath.split('.').pop();
+    const ext = filePath.split(".").pop();
     switch (ext) {
-      case 'html':
-        return 'html';
-      case 'css':
-        return 'css';
-      case 'js':
-        return 'javascript';
-      case 'ts':
-      case 'tsx':
-        return 'typescript';
-      case 'json':
-        return 'json';
-      case 'md':
-        return 'markdown';
+      case "html":
+        return "html";
+      case "css":
+        return "css";
+      case "js":
+        return "javascript";
+      case "ts":
+      case "tsx":
+        return "typescript";
+      case "json":
+        return "json";
+      case "md":
+        return "markdown";
       default:
-        return 'plaintext';
+        return "plaintext";
     }
   };
 
@@ -96,60 +115,93 @@ export function CodeEditor({ filePath, content, onContentChange, editorref, view
     }
   };
 
-  const fileName = filePath.split('/').pop() || filePath;
+  const fileName = filePath.split("/").pop() || filePath;
 
   return (
-    <div className={`h-full flex flex-col bg-slate-900 overflow-hidden ${viewmode === "preview" ? "hidden" : "block"}`}>
-      {/* Tab Bar */}
-      <div className="h-10 bg-slate-800/70 border-b border-slate-700/50 flex items-center px-3 flex-shrink-0">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 rounded-t-md text-sm text-slate-300 border-t border-x border-slate-700/50 -mb-px">
-          <Code2 className="w-3.5 h-3.5 text-slate-500" />
-          <span>{fileName}</span>
-          <span className="text-xs text-slate-500 px-2 py-0.5 bg-slate-800 rounded">
-            {getLanguage().toUpperCase()}
-          </span>
-        </div>
-      </div>
+    <div className={`${viewmode === "code" ? "block" : "hidden"}`}>
+      <Group orientation="vertical">
+        <Panel>
+          <Group orientation="horizontal" className="flex-1">
+            <Panel
+              className={`${viewmode === "code" ? "block" : "hidden"}`}
+              defaultSize={250}
+              minSize={200}
+              maxSize={300}
+            >
+              <FileExplorer
+                files={files}
+                selectedFile={selectedFile}
+                onFileSelect={onFileSelect}
+              />
+            </Panel>
 
-      {/* Monaco Editor */}
-      <div className="flex-1 overflow-hidden">
-        <Editor
-          height="100%"
-          language={getLanguage()}
-          value={content}
-          onChange={handleChange}
-          onMount={handleEditorDidMount}
-          theme="vs-dark"
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            fontFamily: "'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace",
-            fontLigatures: true,
-            lineNumbers: 'on',
-            renderLineHighlight: 'line',
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            tabSize: 2,
-            wordWrap: 'on',
-            padding: { top: 16, bottom: 16 },
-            smoothScrolling: true,
-            cursorBlinking: 'smooth',
-            cursorSmoothCaretAnimation: 'on',
-            scrollbar: {
-              vertical: 'visible',
-              horizontal: 'visible',
-              verticalScrollbarSize: 12,
-              horizontalScrollbarSize: 12,
-            },
-            overviewRulerBorder: false,
-            hideCursorInOverviewRuler: true,
-            overviewRulerLanes: 0,
-            bracketPairColorization: {
-              enabled: true,
-            },
-          }}
-        />
-      </div>
+            <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
+            <Panel className="overflow-hidden">
+              <div
+                className={`h-full flex flex-col bg-slate-900 overflow-hidden ${viewmode === "code" ? "block" : "hidden"}`}
+              >
+                {/* Tab Bar */}
+                <div className="h-10 bg-slate-800/70 border-b border-slate-700/50 flex items-center px-3 flex-shrink-0">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 rounded-t-md text-sm text-slate-300 border-t border-x border-slate-700/50 -mb-px">
+                    <Code2 className="w-3.5 h-3.5 text-slate-500" />
+                    <span>{fileName}</span>
+                    <span className="text-xs text-slate-500 px-2 py-0.5 bg-slate-800 rounded">
+                      {getLanguage().toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Monaco Editor */}
+                <div className="flex-1 overflow-hidden">
+                  <Editor
+                    height="100%"
+                    language={getLanguage()}
+                    value={content}
+                    onChange={handleChange}
+                    onMount={handleEditorDidMount}
+                    theme="vs-dark"
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 14,
+                      fontFamily:
+                        "'Fira Code', 'Cascadia Code', Consolas, 'Courier New', monospace",
+                      fontLigatures: true,
+                      lineNumbers: "on",
+                      renderLineHighlight: "line",
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      tabSize: 2,
+                      wordWrap: "on",
+                      padding: { top: 16, bottom: 16 },
+                      smoothScrolling: true,
+                      cursorBlinking: "smooth",
+                      cursorSmoothCaretAnimation: "on",
+                      scrollbar: {
+                        vertical: "visible",
+                        horizontal: "visible",
+                        verticalScrollbarSize: 12,
+                        horizontalScrollbarSize: 12,
+                      },
+                      overviewRulerBorder: false,
+                      hideCursorInOverviewRuler: true,
+                      overviewRulerLanes: 0,
+                      bracketPairColorization: {
+                        enabled: true,
+                      },
+                    }}
+                  />
+                </div>
+              </div>
+            </Panel>
+          </Group>
+        </Panel>
+        <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
+        <Panel defaultSize={250} minSize={15}>
+          <div className="h-full bg-slate-900 p-2">
+            <div ref={terminalRef} className="h-full" />
+          </div>
+        </Panel>
+      </Group>
     </div>
   );
 }

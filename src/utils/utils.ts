@@ -166,7 +166,14 @@ export class StreamingXmlParser {
   feed(chunk: string): void {
     this.buffer += chunk;
 
-    // ── 1. Detect <MakeWappsArtifact> open ────────────────────────────────────
+    while (true) {
+      const progressMade = this.processBuffer();
+      if (!progressMade) break;
+    }
+  }
+
+  private processBuffer(): boolean {
+    // ── 1. Detect <MakeWappsArtifact> open
     if (!this.insideArtifact) {
       const artifactOpen = this.buffer.match(/<MakeWappsArtifact([^>]*)>/);
       if (artifactOpen) {
@@ -174,38 +181,29 @@ export class StreamingXmlParser {
           0,
           this.buffer.indexOf(artifactOpen[0]),
         );
-        if (narrationPrefix.trim()) {
-          this.onNarrationUpdate?.(narrationPrefix);
-        }
+        if (narrationPrefix.trim()) this.onNarrationUpdate?.(narrationPrefix);
         const titleMatch = artifactOpen[1].match(/title="([^"]*)"/);
-        if (titleMatch?.[1]) {
-          this.onArtifactTitle?.(titleMatch[1]);
-        }
+        if (titleMatch?.[1]) this.onArtifactTitle?.(titleMatch[1]);
         this.insideArtifact = true;
-
         this.buffer = this.buffer.slice(
           this.buffer.indexOf(artifactOpen[0]) + artifactOpen[0].length,
         );
+        return true; // progress made
       } else {
         const firstTagStart = this.buffer.indexOf("<");
         if (firstTagStart === -1) {
-          if (this.buffer.trim()) {
-            this.onNarrationUpdate?.(this.buffer);
-          }
+          if (this.buffer.trim()) this.onNarrationUpdate?.(this.buffer);
           this.buffer = "";
         } else if (firstTagStart > 0) {
           const narrationChunk = this.buffer.slice(0, firstTagStart);
-          if (narrationChunk.trim()) {
-            this.onNarrationUpdate?.(narrationChunk);
-          }
+          if (narrationChunk.trim()) this.onNarrationUpdate?.(narrationChunk);
           this.buffer = this.buffer.slice(firstTagStart);
         }
+        return false;
       }
     }
 
-    if (!this.insideArtifact) return;
-
-    // ── 2. Detect <MakeWappsAction> open — emit step immediately with empty code
+    // ── 2. Detect <MakeWappsAction> open
     if (!this.insideAction) {
       const actionOpen = this.buffer.match(/<MakeWappsAction([^>]*)>/);
       if (actionOpen) {
@@ -215,8 +213,6 @@ export class StreamingXmlParser {
         this.currentContent = "";
         this.insideAction = true;
         this.currentStepId = this.stepId++;
-
-        // Emit step immediately so file is created before content arrives
         if (this.currentActionType === "file") {
           const step = this.buildStep(this.currentStepId, "");
           if (step) this.onStepCreated(step);
@@ -224,49 +220,53 @@ export class StreamingXmlParser {
         this.buffer = this.buffer.slice(
           this.buffer.indexOf(actionOpen[0]) + actionOpen[0].length,
         );
+        return true; // progress made
       }
+
+      // ── 4. Detect </MakeWappsArtifact> (only when not inside an action)
+      if (this.buffer.includes("</MakeWappsArtifact>")) {
+        this.insideArtifact = false;
+        this.buffer = "";
+        return false;
+      }
+
+      return false;
     }
 
-    // ── 3. Stream content into the step as it arrives ─────────────────────
+    // ── 3. Stream content into the step
     if (this.insideAction && this.currentStepId !== null) {
       const closeIdx = this.buffer.indexOf("</MakeWappsAction>");
-
       if (closeIdx !== -1) {
         this.currentContent += this.buffer.slice(0, closeIdx);
         this.buffer = this.buffer.slice(closeIdx + "</MakeWappsAction>".length);
         this.insideAction = false;
-
         const trimmed = this.currentContent.trim();
-        this.onStepContentUpdate(this.currentStepId, trimmed);
-
-        // Emit shell steps now that we have the full command
+        if (this.currentActionType === "file") {
+          this.onStepContentUpdate(this.currentStepId, trimmed);
+        }
         if (this.currentActionType === "shell") {
           const step = this.buildStep(this.currentStepId, trimmed);
           if (step) this.onStepCreated(step);
         }
-
         this.onStepComplete(this.currentStepId);
         this.currentStepId = null;
+        return true; // progress made — loop again to catch next action
       } else {
-        // Still streaming — hold back enough chars to catch a split closing tag
         const safeLen = Math.max(
           0,
           this.buffer.length - "</MakeWappsAction>".length,
         );
         if (safeLen > 0) {
           this.currentContent += this.buffer.slice(0, safeLen);
-          // 🔴 Live update — file content grows as stream arrives
           this.onStepContentUpdate(this.currentStepId, this.currentContent);
           this.buffer = this.buffer.slice(safeLen);
+          return true;
         }
+        return false;
       }
     }
 
-    // ── 4. Detect </MakeWappsArtifact> ─────────────────────────────────────────
-    if (this.insideArtifact && this.buffer.includes("</MakeWappsArtifact>")) {
-      this.insideArtifact = false;
-      this.buffer = "";
-    }
+    return false;
   }
 
   private buildStep(id: number, code: string): Step | null {

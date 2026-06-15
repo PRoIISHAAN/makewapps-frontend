@@ -15,6 +15,7 @@
     "@types/axios": "^0.9.36",
     "@types/react-router-dom": "^5.3.3",
     "@webcontainer/api": "^1.6.4",
+    "@xterm/xterm": "^6.0.0",
     "axios": "^1.16.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -22,6 +23,7 @@
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "react-loader-spinner": "^8.0.2",
     "react-resizable-panels": "^4.11.2",
     "react-router-dom": "^7.15.1",
     "tailwind-merge": "^3.6.0"

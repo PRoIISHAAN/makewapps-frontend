@@ -7,13 +7,14 @@ import {
   StepType,
 } from "../types/types.ts";
 import { ChatPanel } from "../Components/Chat/ChatPanel";
-import { FileExplorer } from "../Components/Chat/FileExplorer";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import { CodeEditor } from "../Components/Chat/CodeEditor";
 import { Preview } from "../Components/Chat/Preview";
 import { generateSteps } from "../utils/fileGenerator";
 import { applyStepToFileTree } from "../utils/fileTree";
 import { Panel, Group, Separator } from "react-resizable-panels";
-import { Zap, FolderOpen, Eye, Code } from "lucide-react";
+import { Zap, Eye, Code } from "lucide-react";
 import { BACKEND_URL } from "../config.ts";
 import { StreamingXmlParser } from "../utils/utils.ts";
 import { Queue } from "../utils/Queue.ts";
@@ -81,41 +82,88 @@ export function ChatPage() {
     if (modifiedFiles.length === 0) return "";
     return `<fileModifications>\n${modifiedFiles.join("\n")}\n</fileModifications>`;
   };
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+
+  const spawnShell = async () => {
+  if (!webcontainerRef.current || !xtermRef.current) return;
+  
+  const terminal = xtermRef.current;
+  const shellProcess = await webcontainerRef.current.spawn('jsh', {
+    terminal: {
+      cols: terminal.cols,
+      rows: terminal.rows,
+    },
+  });
+
+  shellProcess.output.pipeTo(
+    new WritableStream({ write(data) { terminal.write(data); } })
+  );
+
+  const input = shellProcess.input.getWriter();
+  terminal.onData((data) => input.write(data));
+
+  // Handle terminal resize
+  terminal.onResize(({ cols, rows }) => {
+    shellProcess.resize({ cols, rows });
+  });
+};
+
+  const initTerminal = () => {
+  if (xtermRef.current || !terminalRef.current) return;
+
+  const terminal = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: {
+      background: "#0f172a",
+      foreground: "#e2e8f0",
+    },
+  });
+
+  terminal.open(terminalRef.current);
+  xtermRef.current = terminal;
+
+  // Remove the onData handler here entirely — spawnShell manages I/O
+  
+  return terminal;
+};
 
   const npmInstall = async () => {
     if (webcontainerRef.current) {
+      const terminal = xtermRef.current;
       const process = await webcontainerRef.current.spawn("npm", ["install"]);
       process.output.pipeTo(
         new WritableStream({
           write(data) {
-            console.log(data);
+            terminal?.write(data);
           },
         }),
       );
       await process.exit;
     }
   };
-  const npmRun = async () => {
+
+  const npmRun = async (script: string) => {
     if (webcontainerRef.current) {
-      await npmInstall();
+      const terminal = xtermRef.current;
       const process = await webcontainerRef.current.spawn("npm", [
         "run",
-        "start",
+        script,
       ]);
       process.output.pipeTo(
         new WritableStream({
           write(data) {
-            console.log(data);
+            terminal?.write(data);
           },
         }),
       );
       webcontainerRef.current.on("server-ready", (_, url) => {
         setIframeUrl(url);
       });
-      return;
     }
   };
-  const [steps, setSteps] = useState<Step[]>([]);
   const stepsRef = useRef<Step[]>([]);
   const [files, setFiles] = useState<FileTreeNode[]>([]);
   const filesRef = useRef<FileTreeNode[]>([]);
@@ -127,49 +175,45 @@ export function ChatPage() {
   const assistantMessageIdRef = useRef<string | null>(null);
   const assistantNarrationRef = useRef<string>("");
 
-const ensureAssistantMessage = () => {
-  if (assistantMessageIdRef.current) return;
+  const ensureAssistantMessage = () => {
+    if (assistantMessageIdRef.current) return;
 
-  const id = (Date.now() + 1).toString();
-  assistantMessageIdRef.current = id;
-  setMessages((prev) => [
-    ...prev,
-    {
-      id,
-      role: "assistant",
-      content: "",
-      timestamp: new Date(),
-      steps: [],
-    },
-  ]);
-};
-
-  const updateSteps = (newSteps: Step[]) => {
-    stepsRef.current = newSteps;
-    setSteps(newSteps);
-
-    ensureAssistantMessage();
-
-    if (!assistantMessageIdRef.current) return;
-
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === assistantMessageIdRef.current
-          ? { ...msg, steps: newSteps }
-          : msg,
-      ),
-    );
+    const id = (Date.now() + 1).toString();
+    assistantMessageIdRef.current = id;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        role: "assistant",
+        content: "",
+        timestamp: new Date(),
+        steps: [],
+      },
+    ]);
   };
 
-  const updateAssistantMessageContent = (content: string) => {
+  const updateSteps = (newSteps: Step[]) => {
+  stepsRef.current = newSteps;
   ensureAssistantMessage();
 
   setMessages((prev) =>
     prev.map((msg) =>
-      msg.id === assistantMessageIdRef.current ? { ...msg, content } : msg,
+      msg.id === assistantMessageIdRef.current
+        ? { ...msg, steps: newSteps }
+        : msg,
     ),
   );
 };
+
+  const updateAssistantMessageContent = (content: string) => {
+    ensureAssistantMessage();
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === assistantMessageIdRef.current ? { ...msg, content } : msg,
+      ),
+    );
+  };
 
   function updateFileContent(
     nodes: FileTreeNode[],
@@ -214,7 +258,7 @@ const ensureAssistantMessage = () => {
           runCommandRef.current === false
         ) {
           runCommandRef.current = true;
-          await npmRun();
+          await npmRun(args[1] ?? args[0]);
           return;
         }
         if (args[0] === "install") {
@@ -250,11 +294,12 @@ const ensureAssistantMessage = () => {
     if (!webcontainerRef.current) {
       const webcontainerInstance = await WebContainer.boot();
       webcontainerRef.current = webcontainerInstance;
+      initTerminal();
+      spawnShell()
     }
     for (const step of steps) {
       if (step.status === "isStreaming") {
-        pendingApplyCompleteRef.current = false;
-        break;
+        continue;
       }
       if (step.status !== "pending") {
         continue;
@@ -326,6 +371,7 @@ const ensureAssistantMessage = () => {
     const parser = new StreamingXmlParser(
       nextStepId,
       async (step) => {
+        console.log("New step received:", step);
         updateSteps([...stepsRef.current, step]);
         if (
           (step.type === StepType.CreateFile ||
@@ -369,13 +415,23 @@ const ensureAssistantMessage = () => {
           setFiles(nextFiles);
         }
       },
-      async (id) => {
+      (id) => {
+        const step = stepsRef.current.find((s) => s.id === id);
+        if (
+          step?.type === StepType.RunScript &&
+          step.code &&
+          runCommandRef.current === true &&
+          (step.code.trim().startsWith("npm run") ||
+            step.code.trim() === "npm start")
+        ) {
+          return;
+        }
         updateSteps(
           stepsRef.current.map((s) =>
             s.id === id ? { ...s, status: "pending" } : s,
           ),
         );
-        await applyCompleted(stepsRef.current);
+        applyCompleted(stepsRef.current);
       },
       (text) => {
         const trimmed = text.trim();
@@ -461,9 +517,9 @@ const ensureAssistantMessage = () => {
     <div className="h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden">
       <Group orientation="horizontal" className="flex-1">
         <Panel
-          defaultSize={300}
-          minSize={200}
-          maxSize={400}
+          defaultSize={400}
+          minSize={350}
+          maxSize={450}
           className="flex flex-col border-r border-slate-700/50 bg-slate-900"
         >
           <header className="px-6 py-4 border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
@@ -472,9 +528,7 @@ const ensureAssistantMessage = () => {
                 <Zap className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-white">
-                  Website Builder
-                </h1>
+                <h1 className="text-lg font-semibold text-white">Wapps</h1>
                 <p className="text-xs text-slate-400">
                   Create websites with AI
                 </p>
@@ -493,16 +547,6 @@ const ensureAssistantMessage = () => {
 
         <Panel className="flex flex-col">
           <header className="h-14 px-4 flex items-center justify-between border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <FolderOpen className="w-5 h-5 text-slate-400" />
-              <h2 className="text-sm font-medium text-slate-300">Explorer</h2>
-              {files.length > 0 && (
-                <span className="ml-2 px-2 py-0.5 text-xs bg-emerald-500/20 text-emerald-400 rounded-full">
-                  {files.filter((f) => f.type === "file").length} files
-                </span>
-              )}
-            </div>
-
             <div className="flex items-center gap-1 bg-slate-700/50 rounded-lg p-1">
               <button
                 onClick={() => setViewMode("preview")}
@@ -532,29 +576,18 @@ const ensureAssistantMessage = () => {
               </button>
             </div>
           </header>
-
-          <Group orientation="horizontal" className="flex-1">
-            <Panel defaultSize={350} minSize={250} maxSize={400}>
-              <FileExplorer
+              <Preview viewmode={viewMode} url={iFrameUrl} />
+              <CodeEditor
                 files={files}
                 selectedFile={selectedFile}
                 onFileSelect={handleFileSelect}
-              />
-            </Panel>
-
-            <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
-
-            <Panel className="overflow-hidden">
-              <Preview viewmode={viewMode} url={iFrameUrl} />
-              <CodeEditor
                 viewmode={viewMode}
                 filePath={selectedFile}
                 content={getSelectedFileContent()}
                 onContentChange={handleFileUpdate}
                 editorref={editorref}
+                terminalRef={terminalRef}
               />
-            </Panel>
-          </Group>
         </Panel>
       </Group>
     </div>
