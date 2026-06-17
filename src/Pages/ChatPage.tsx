@@ -39,7 +39,7 @@ type ChatSession = {
   userPrompts: string[];
   llmFileContents: Record<string, string>;
   viewMode: "code" | "preview";
-  runScript : string;
+  runScript: string;
 };
 
 export function ChatPage() {
@@ -123,7 +123,7 @@ export function ChatPage() {
   };
 
   const rebuildWebContainer = async (files: FileTreeNode[]) => {
-setSweepAnimation(true);
+    setSweepAnimation(true);
     const instance = await WebContainer.boot();
     webcontainerRef.current = instance;
 
@@ -133,7 +133,7 @@ setSweepAnimation(true);
     const mountTree = fileTreeToMountTree(files);
     await instance.mount(mountTree);
     await npmInstall();
-    npmRun(runScriptRef.current)
+    npmRun(runScriptRef.current);
 
     return instance;
   };
@@ -189,7 +189,7 @@ setSweepAnimation(true);
       userPrompts: userPromptsRef.current,
       llmFileContents: llmFileContentsRef.current,
       viewMode,
-      runScript : runScriptRef.current
+      runScript: runScriptRef.current,
     };
 
     sessionStorage.setItem("chat-session", JSON.stringify(session));
@@ -208,7 +208,7 @@ setSweepAnimation(true);
 
     llmFileContentsRef.current = session.llmFileContents ?? {};
 
-    runScriptRef.current = session.runScript
+    runScriptRef.current = session.runScript;
 
     setViewMode(session.viewMode ?? "preview");
   };
@@ -301,75 +301,89 @@ setSweepAnimation(true);
   };
 
   async function getPackagesToInstall(
-  snapshotPackageLock: Record<string, { version: string }>,
-  webcontainer: WebContainer
-): Promise<string[]> {
-  let currentPackageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    snapshotPackageLock: Record<string, { version: string }>,
+    webcontainer: WebContainer,
+  ): Promise<string[]> {
+    let currentPackageJson: {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
 
-  try {
-    const bytes = await webcontainer.fs.readFile("package.json");
-    currentPackageJson = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return [];
-  }
-
-  const allRequested = {
-    ...currentPackageJson.dependencies,
-    ...currentPackageJson.devDependencies,
-  };
-
-  const missing: string[] = [];
-
-  for (const [pkg, requestedRange] of Object.entries(allRequested)) {
-    const lockKey = `node_modules/${pkg}`;
-    const installed = snapshotPackageLock[lockKey];
-
-    if (!installed) {
-      // Package not in snapshot at all
-      missing.push(`${pkg}@${requestedRange}`);
+    try {
+      const bytes = await webcontainer.fs.readFile("package.json");
+      currentPackageJson = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return [];
     }
-    // If it IS in the snapshot we trust npm's semver resolution already satisfied
-    // the range that was used to build the snapshot. If the project bumped to a
-    // range the snapshot can't satisfy, npm install <pkg@range> will catch it.
-  }
 
-  return missing;
-}
+    const allRequested = {
+      ...currentPackageJson.dependencies,
+      ...currentPackageJson.devDependencies,
+    };
+
+    const missing: string[] = [];
+
+    for (const [pkg, requestedRange] of Object.entries(allRequested)) {
+      const lockKey = `node_modules/${pkg}`;
+      const installed = snapshotPackageLock[lockKey];
+
+      if (!installed) {
+        // Package not in snapshot at all
+        missing.push(`${pkg}@${requestedRange}`);
+      }
+      // If it IS in the snapshot we trust npm's semver resolution already satisfied
+      // the range that was used to build the snapshot. If the project bumped to a
+      // range the snapshot can't satisfy, npm install <pkg@range> will catch it.
+    }
+
+    return missing;
+  }
 
   const npmInstall = async () => {
-  if (!webcontainerRef.current) return;
+    if (!webcontainerRef.current) return;
 
-  const snapshotUrl = sessionStorage.getItem("snapshotUrl");
+    const snapshotUrl = sessionStorage.getItem("snapshotUrl");
 
-  if (snapshotUrl) {
-    const result = await fetchAndExtractNodeModulesSnapshot(
-      snapshotUrl,
-      webcontainerRef.current,
-    );
-
-    if (result.success) {
-      const extraPackages = await getPackagesToInstall(
-        result.snapshotPackageLock,
-        webcontainerRef.current
+    if (snapshotUrl) {
+      const result = await fetchAndExtractNodeModulesSnapshot(
+        snapshotUrl,
+        webcontainerRef.current,
       );
-      const terminal = xtermRef.current;
-      const process = await webcontainerRef.current.spawn("npm", ["install", ...extraPackages]);
-      process.output.pipeTo(
-        new WritableStream({ write(data) { terminal?.write(data); } })
-      );
-      await process.exit;
-      return;
+
+      if (result.success) {
+        const extraPackages = await getPackagesToInstall(
+          result.snapshotPackageLock,
+          webcontainerRef.current,
+        );
+        const terminal = xtermRef.current;
+        const process = await webcontainerRef.current.spawn("npm", [
+          "install",
+          ...extraPackages,
+        ]);
+        process.output.pipeTo(
+          new WritableStream({
+            write(data) {
+              terminal?.write(data);
+            },
+          }),
+        );
+        await process.exit;
+        return;
+      }
     }
-  }
 
-  // Full fallback
-  const terminal = xtermRef.current;
-  const process = await webcontainerRef.current.spawn("npm", ["install"]);
-  process.output.pipeTo(
-    new WritableStream({ write(data) { terminal?.write(data); } })
-  );
-  await process.exit;
-};
+    // Full fallback
+    const terminal = xtermRef.current;
+    const process = await webcontainerRef.current.spawn("npm", ["install"]);
+    process.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          terminal?.write(data);
+        },
+      }),
+    );
+    await process.exit;
+  };
 
   const npmRun = async (script: string) => {
     if (webcontainerRef.current) {
@@ -433,7 +447,6 @@ setSweepAnimation(true);
 
   const updateSteps = (newSteps: Step[]) => {
     stepsRef.current = newSteps;
-    ensureAssistantMessage();
 
     setMessages((prev) =>
       prev.map((msg) =>
@@ -881,8 +894,8 @@ setSweepAnimation(true);
             className={`${viewMode === "preview" ? "block" : "hidden"} h-full`}
           >
             <Preview
-            sweepAnimation={sweepAnimation}
-            setSweepAnimation={setSweepAnimation}
+              sweepAnimation={sweepAnimation}
+              setSweepAnimation={setSweepAnimation}
               isGenerating={isGenerating}
               viewmode={viewMode}
               url={iFrameUrl}
