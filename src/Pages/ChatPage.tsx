@@ -106,6 +106,7 @@ export function ChatPage() {
   };
 
   const rebuildWebContainer = async (files: FileTreeNode[]) => {
+    console.log("Rebuilding WebContainer with new file tree...");
     const instance = await WebContainer.boot();
     webcontainerRef.current = instance;
 
@@ -114,9 +115,7 @@ export function ChatPage() {
 
     const mountTree = fileTreeToMountTree(files);
     await instance.mount(mountTree);
-
-    // Re-install deps on session restore using snapshot
-    await npmInstall(); // will auto-use snapshotUrl from sessionStorage
+    await npmInstall();
 
     return instance;
   };
@@ -328,24 +327,12 @@ export function ChatPage() {
     const result = await fetchAndExtractNodeModulesSnapshot(
       snapshotUrl,
       webcontainerRef.current,
-      (msg) => xtermRef.current?.writeln(`\r\n\x1b[36m[snapshot] ${msg}\x1b[0m`)
     );
 
     if (result.success) {
       const extraPackages = await getPackagesToInstall(
         result.snapshotPackageLock,
         webcontainerRef.current
-      );
-
-      if (extraPackages.length === 0) {
-        xtermRef.current?.writeln(
-          "\r\n\x1b[36m[snapshot] Dependencies up to date — skipping npm install\x1b[0m"
-        );
-        return;
-      }
-
-      xtermRef.current?.writeln(
-        `\r\n\x1b[33m[npm] Installing new packages: ${extraPackages.join(", ")}\x1b[0m`
       );
       const terminal = xtermRef.current;
       const process = await webcontainerRef.current.spawn("npm", ["install", ...extraPackages]);
@@ -358,7 +345,6 @@ export function ChatPage() {
   }
 
   // Full fallback
-  xtermRef.current?.writeln("\r\n\x1b[33m[npm] Running npm install...\x1b[0m");
   const terminal = xtermRef.current;
   const process = await webcontainerRef.current.spawn("npm", ["install"]);
   process.output.pipeTo(
@@ -708,14 +694,14 @@ export function ChatPage() {
 
     setIsGenerating(false);
   };
+
   useEffect(() => {
     const saved = sessionStorage.getItem("chat-session");
 
-    if (saved) {
+    if (saved && JSON.parse(saved).files.length > 0) {
       const session = JSON.parse(saved);
 
       restoreSession(saved);
-
       void rebuildWebContainer(session.files);
 
       return;
