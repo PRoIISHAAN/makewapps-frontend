@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { WebContainer } from "@webcontainer/api";
 import {
   type Step,
@@ -6,7 +6,9 @@ import {
   type FileTreeNode,
   StepType,
 } from "../types/types.ts";
+import JSZip from "jszip";
 import { ChatPanel } from "../Components/Chat/ChatPanel";
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { CodeEditor } from "../Components/Chat/CodeEditor";
@@ -14,30 +16,62 @@ import { Preview } from "../Components/Chat/Preview";
 import { generateSteps } from "../utils/fileGenerator";
 import { applyStepToFileTree } from "../utils/fileTree";
 import { Panel, Group, Separator } from "react-resizable-panels";
-import { Zap, Eye, Code } from "lucide-react";
+import {
+  Zap,
+  Eye,
+  Code,
+  ExternalLink,
+  RefreshCw,
+  Download,
+} from "lucide-react";
 import { BACKEND_URL } from "../config.ts";
 import { StreamingXmlParser } from "../utils/utils.ts";
+import { useLocation } from "react-router-dom";
 import { Queue } from "../utils/Queue.ts";
 import * as Diff from "diff";
 
 export function ChatPage() {
+  const location = useLocation();
+  const { prompt } = location.state as { prompt: string };
   const [iFrameUrl, setIframeUrl] = useState("");
   const [, setTitle] = useState("");
   const userPromptsRef = useRef<string[]>([]);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const editorref = useRef<any>(null);
   const runCommandRef = useRef<Boolean>(false);
   const ApplyingToFileTreeRef = useRef(false);
   const llmFileContentsRef = useRef<Record<string, string>>({});
   const webcontainerRef = useRef<WebContainer | null>(null);
-  const [messages, setMessages] = useState<FileMessage[]>([
-    {
-      id: "1",
-      role: "assistant",
-      content:
-        "Hi! I'm your AI website builder. Describe the website you want to create, and I'll generate the files for you.",
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<FileMessage[]>([]);
+  const [iFrameKey, setIFrameKey] = useState(0);
+  const renderQueueRef = useRef<string[]>([]);
+  const isRenderingRef = useRef(false);
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  const startWordRenderer = async () => {
+    if (isRenderingRef.current) return;
+
+    isRenderingRef.current = true;
+
+    while (renderQueueRef.current.length > 0) {
+      const token = renderQueueRef.current.shift();
+
+      if (!token) continue;
+
+      assistantNarrationRef.current += token;
+
+      updateAssistantMessageContent(assistantNarrationRef.current);
+
+      const queueSize = renderQueueRef.current.length;
+
+      const delay = queueSize > 300 ? 25 : queueSize > 100 ? 20 : 50;
+
+      await sleep(delay);
+    }
+
+    isRenderingRef.current = false;
+  };
 
   const buildFileModifications = (): string => {
     const modifiedFiles: string[] = [];
@@ -85,50 +119,92 @@ export function ChatPage() {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
 
+  const handleDownload = async () => {
+    const zip = new JSZip();
+
+    const addFilesToZip = (nodes: FileTreeNode[], zip: JSZip) => {
+      for (const node of nodes) {
+        if (node.type === "file" && node.content !== undefined) {
+          zip.file(node.path, node.content);
+        }
+        if (node.type === "folder" && node.children) {
+          addFilesToZip(node.children, zip);
+        }
+      }
+    };
+
+    addFilesToZip(filesRef.current, zip);
+
+    const blob = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "project.zip";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const spawnShell = async () => {
-  if (!webcontainerRef.current || !xtermRef.current) return;
-  
-  const terminal = xtermRef.current;
-  const shellProcess = await webcontainerRef.current.spawn('jsh', {
-    terminal: {
-      cols: terminal.cols,
-      rows: terminal.rows,
-    },
-  });
+    if (!webcontainerRef.current || !xtermRef.current) return;
 
-  shellProcess.output.pipeTo(
-    new WritableStream({ write(data) { terminal.write(data); } })
-  );
+    const terminal = xtermRef.current;
+    const shellProcess = await webcontainerRef.current.spawn("jsh", {
+      terminal: {
+        cols: terminal.cols,
+        rows: terminal.rows,
+      },
+    });
 
-  const input = shellProcess.input.getWriter();
-  terminal.onData((data) => input.write(data));
+    shellProcess.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          terminal.write(data);
+        },
+      }),
+    );
 
-  // Handle terminal resize
-  terminal.onResize(({ cols, rows }) => {
-    shellProcess.resize({ cols, rows });
-  });
-};
+    const input = shellProcess.input.getWriter();
+    terminal.onData((data) => input.write(data));
+
+    // Handle terminal resize
+    terminal.onResize(({ cols, rows }) => {
+      shellProcess.resize({ cols, rows });
+    });
+  };
 
   const initTerminal = () => {
-  if (xtermRef.current || !terminalRef.current) return;
+    if (xtermRef.current || !terminalRef.current) return;
 
-  const terminal = new Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: {
-      background: "#0f172a",
-      foreground: "#e2e8f0",
-    },
-  });
+    const terminal = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: "#1e1e21",
+        foreground: "#e9e9e9",
+      },
+      scrollback: 1000,
+      disableStdin: false,
+      overviewRuler: {
+        width: 0,
+      }, // removes the overview ruler on the right
+    });
+    terminal.open(terminalRef.current);
+    xtermRef.current = terminal;
 
-  terminal.open(terminalRef.current);
-  xtermRef.current = terminal;
+    const fitAddon = new FitAddon();
+    fitAddonRef.current = fitAddon;
+    terminal.loadAddon(fitAddon);
+    terminal.open(terminalRef.current);
+    fitAddon.fit();
+    xtermRef.current = terminal;
 
-  // Remove the onData handler here entirely — spawnShell manages I/O
-  
-  return terminal;
-};
+    // Refit on resize
+    const observer = new ResizeObserver(() => fitAddon.fit());
+    observer.observe(terminalRef.current);
+
+    return terminal;
+  };
 
   const npmInstall = async () => {
     if (webcontainerRef.current) {
@@ -193,17 +269,17 @@ export function ChatPage() {
   };
 
   const updateSteps = (newSteps: Step[]) => {
-  stepsRef.current = newSteps;
-  ensureAssistantMessage();
+    stepsRef.current = newSteps;
+    ensureAssistantMessage();
 
-  setMessages((prev) =>
-    prev.map((msg) =>
-      msg.id === assistantMessageIdRef.current
-        ? { ...msg, steps: newSteps }
-        : msg,
-    ),
-  );
-};
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === assistantMessageIdRef.current
+          ? { ...msg, steps: newSteps }
+          : msg,
+      ),
+    );
+  };
 
   const updateAssistantMessageContent = (content: string) => {
     ensureAssistantMessage();
@@ -259,6 +335,7 @@ export function ChatPage() {
         ) {
           runCommandRef.current = true;
           await npmRun(args[1] ?? args[0]);
+          setViewMode("preview");
           return;
         }
         if (args[0] === "install") {
@@ -285,6 +362,10 @@ export function ChatPage() {
     );
   };
 
+  const handleOpenInNewTab = () => {
+    window.open(iFrameUrl, "_blank");
+  };
+
   const applyCompleted = async (steps: Step[]) => {
     if (isApplyingCompleteRef.current) {
       pendingApplyCompleteRef.current = true;
@@ -295,7 +376,7 @@ export function ChatPage() {
       const webcontainerInstance = await WebContainer.boot();
       webcontainerRef.current = webcontainerInstance;
       initTerminal();
-      spawnShell()
+      spawnShell();
     }
     for (const step of steps) {
       if (step.status === "isStreaming") {
@@ -347,8 +428,9 @@ export function ChatPage() {
     setMessages((prev) => [...prev, userMessage]);
 
     setIsGenerating(true);
+    stepsRef.current = [];
 
-    if (stepsRef.current.length === 0) {
+    if (stepsRef.current.length === 0 && filesRef.current.length === 0) {
       const templateApiResponse = await generateSteps(content);
       const templateSteps = templateApiResponse.steps;
       userPromptsRef.current = [
@@ -357,7 +439,7 @@ export function ChatPage() {
       ];
       updateSteps(templateSteps);
 
-      applyCompleted(stepsRef.current);
+      await applyCompleted(stepsRef.current);
       for (const step of stepsRef.current) {
         if (step.path && step.code) {
           llmFileContentsRef.current[step.path] = step.code;
@@ -434,11 +516,11 @@ export function ChatPage() {
         applyCompleted(stepsRef.current);
       },
       (text) => {
-        const trimmed = text.trim();
-        if (!trimmed) return;
+        const tokens = text.match(/\S+\s*/g) || [];
 
-        assistantNarrationRef.current += text;
-        updateAssistantMessageContent(assistantNarrationRef.current.trim());
+        renderQueueRef.current.push(...tokens);
+
+        void startWordRenderer();
       },
       setTitle,
     );
@@ -477,26 +559,35 @@ export function ChatPage() {
     }
 
     setIsGenerating(false);
-    setViewMode("preview");
   };
-
+  useEffect(() => {
+    if (prompt) {
+      handleSendMessage(prompt);
+    }
+  }, []);
   const handleFileSelect = useCallback((path: string) => {
     setViewMode("code");
     setSelectedFile(path);
   }, []);
 
-  const handleFileUpdate = useCallback((path: string, content: string) => {
-    const updateFile = (nodes: FileTreeNode[]): FileTreeNode[] =>
-      nodes.map((node) => {
-        if (node.path === path && node.type === "file")
-          return { ...node, content };
-        if (node.type === "folder" && node.children)
-          return { ...node, children: updateFile(node.children) };
-        return node;
-      });
-    filesRef.current = updateFile(filesRef.current);
-    setFiles(filesRef.current);
-  }, []);
+  const handleFileUpdate = useCallback(
+    async (path: string, content: string) => {
+      const updateFile = (nodes: FileTreeNode[]): FileTreeNode[] =>
+        nodes.map((node) => {
+          if (node.path === path && node.type === "file")
+            return { ...node, content };
+          if (node.type === "folder" && node.children)
+            return { ...node, children: updateFile(node.children) };
+          return node;
+        });
+      filesRef.current = updateFile(filesRef.current);
+      setFiles(filesRef.current);
+      if (webcontainerRef.current) {
+        await webcontainerRef.current.fs.writeFile(path, content);
+      }
+    },
+    [],
+  );
 
   const getSelectedFileContent = () => {
     const findFile = (nodes: FileTreeNode[], path: string): string => {
@@ -514,28 +605,81 @@ export function ChatPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100 overflow-hidden">
-      <Group orientation="horizontal" className="flex-1">
+    <div className="h-screen flex flex-col bg-[#1e1e21] pb-4 text-slate-100 overflow-hidden">
+      <div className="flex justify-between py-1 px-4 pt-2">
+        <header>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+              <Zap className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-white">Wapps</h1>
+              <p className="text-xs text-slate-400">Create websites with AI</p>
+            </div>
+          </div>
+        </header>
+        <header className="flex items-center justify-between border-slate-700/50 flex-shrink-0">
+          <div className="flex items-center gap-1 rounded-lg">
+            <button
+              onClick={() => setViewMode("preview")}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                viewMode === "preview"
+                  ? "bg-blue-500 text-white shadow-lg shadow-emerald-500/20"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <Eye className="w-4 h-4" />
+                Preview
+              </div>
+            </button>
+            <button
+              onClick={() => setViewMode("code")}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                viewMode === "code"
+                  ? "bg-blue-500 text-white shadow-lg shadow-emerald-500/20"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <Code className="w-4 h-4" />
+                Code
+              </div>
+            </button>
+            <button
+              disabled={filesRef.current.length === 0}
+              onClick={handleOpenInNewTab}
+              className="p-2 rounded-md disabled:opacity-30 disabled:cursor-not-allowed text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
+              title="Open in new tab"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIFrameKey((k) => k + 1)}
+              disabled={filesRef.current.length === 0}
+              className="p-2 rounded-md disabled:opacity-30 disabled:cursor-not-allowed text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
+              title="Refresh preview"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleDownload}
+              disabled={filesRef.current.length === 0}
+              className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              title="Download project"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          </div>
+        </header>
+      </div>
+      <Group orientation="horizontal" className="flex-1 relative">
         <Panel
           defaultSize={400}
           minSize={350}
           maxSize={450}
-          className="flex flex-col border-r border-slate-700/50 bg-slate-900"
+          className="flex flex-col border-slate-700/50"
         >
-          <header className="px-6 py-4 border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-                <Zap className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-lg font-semibold text-white">Wapps</h1>
-                <p className="text-xs text-slate-400">
-                  Create websites with AI
-                </p>
-              </div>
-            </div>
-          </header>
-
           <ChatPanel
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -543,51 +687,50 @@ export function ChatPage() {
           />
         </Panel>
 
-        <Separator className="w-1 bg-slate-700/50 hover:bg-emerald-500 transition-colors cursor-col-resize" />
+        <Separator className="w-3 absolute hover:bg-slate-700/20 transition-colors cursor-col-resize" />
 
-        <Panel className="flex flex-col">
-          <header className="h-14 px-4 flex items-center justify-between border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm flex-shrink-0">
-            <div className="flex items-center gap-1 bg-slate-700/50 rounded-lg p-1">
-              <button
-                onClick={() => setViewMode("preview")}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  viewMode === "preview"
-                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
-                    : "text-slate-400 hover:text-white"
-                }`}
+        <Panel className="flex h-full flex-col border rounded-xl m-4 ml-0 mt-0">
+          <div className={`${viewMode === "code" ? "block" : "hidden"} h-full`}>
+            <Group orientation="vertical">
+              <Panel>
+                <CodeEditor
+                  files={files}
+                  selectedFile={selectedFile}
+                  onFileSelect={handleFileSelect}
+                  viewmode={viewMode}
+                  filePath={selectedFile}
+                  content={getSelectedFileContent()}
+                  onContentChange={handleFileUpdate}
+                  editorref={editorref}
+                />
+              </Panel>
+              <Separator
+                className={`w-3 hover:bg-slate-700/20 transition-colors cursor-col-resize`}
+              ></Separator>
+              <Panel
+                style={{
+                  display:
+                    viewMode === "code" && xtermRef.current ? "block" : "none",
+                }}
+                defaultSize={150}
+                minSize={50}
+                collapsible
+                className="border-t"
               >
-                <div className="flex items-center gap-1.5">
-                  <Eye className="w-4 h-4" />
-                  Preview
-                </div>
-              </button>
-              <button
-                onClick={() => setViewMode("code")}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  viewMode === "code"
-                    ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <Code className="w-4 h-4" />
-                  Code
-                </div>
-              </button>
-            </div>
-          </header>
-              <Preview viewmode={viewMode} url={iFrameUrl} />
-              <CodeEditor
-                files={files}
-                selectedFile={selectedFile}
-                onFileSelect={handleFileSelect}
-                viewmode={viewMode}
-                filePath={selectedFile}
-                content={getSelectedFileContent()}
-                onContentChange={handleFileUpdate}
-                editorref={editorref}
-                terminalRef={terminalRef}
-              />
+                <div className="h-full" ref={terminalRef} />{" "}
+              </Panel>
+            </Group>
+          </div>
+          <div
+            className={`${viewMode === "preview" ? "block" : "hidden"} h-full`}
+          >
+            <Preview
+              isGenerating={isGenerating}
+              viewmode={viewMode}
+              url={iFrameUrl}
+              key={iFrameKey}
+            />
+          </div>
         </Panel>
       </Group>
     </div>

@@ -1,79 +1,196 @@
 html {
-    scroll-behavior: smooth;
+  scroll-behavior: smooth;
 }
 
 .glow-blue {
-    box-shadow: 0 0 30px rgba(59,130,246,0.5), 0 0 60px rgba(59,130,246,0.3);
+  box-shadow:
+    0 0 30px rgba(59, 130, 246, 0.5),
+    0 0 60px rgba(59, 130, 246, 0.3);
 }
 
 .glow-blue-soft {
-    box-shadow: 0 0 20px rgba(59,130,246,0.2), 0 0 40px rgba(59,130,246,0.1);
+  box-shadow:
+    0 0 20px rgba(59, 130, 246, 0.2),
+    0 0 40px rgba(59, 130, 246, 0.1);
 }
 
 .glow-blue-strong {
-    box-shadow: 0 0 30px rgba(59,130,246,0.5), 0 0 60px rgba(59,130,246,0.3);
+  box-shadow:
+    0 0 30px rgba(59, 130, 246, 0.5),
+    0 0 60px rgba(59, 130, 246, 0.3);
 }
 
 /* Gradient animation */
 @keyframes gradient {
-    0%, 100% {
-        background-position: 0% 50%;
-    }
-    50% {
-        background-position: 100% 50%;
-    }
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
 }
 
 .animate-gradient {
-    background-size: 200% 200%;
-    animation: gradient 3s ease infinite;
+  background-size: 200% 200%;
+  animation: gradient 3s ease infinite;
 }
 
 @keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {
-    animation: fadeIn 0.6s ease-out forwards;
+  animation: fadeIn 0.6s ease-out forwards;
 }
 
 /* Pulse animation */
 @keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-}
-
-/* Selection color */
-::selection {
-    background-color: rgba(59,130,246,0.3);
-    color: white;
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-    width: 10px;
+  width: 5px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #0a0a0a;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: linear-gradient(to bottom, #3B82F6, #1E40AF);
-    border-radius: 5px;
+  border-radius: 5px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(to bottom, #60A5FA, #3B82F6);
+@keyframes scrollbar-fade-in {
+  from {
+    background: transparent;
+  }
+  to {
+    background: rgba(100, 100, 100, 0.5);
+  }
+}
+
+@keyframes scrollbar-fade-out {
+  from {
+    background: rgba(100, 100, 100, 0.5);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 5px;
+  animation: scrollbar-fade-out 0.5s ease;
+}
+
+/* Show on hover of the scrollable container */
+*:hover::-webkit-scrollbar-thumb {
+  animation: scrollbar-fade-in 0.5s ease;
+}
+
+/* Keep visible while scrolling */
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 100, 0.5); /* slate-400 */
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 0px !important;
+}
+
+.xterm-viewport {
+  scrollbar-width: none !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.xterm-viewport:hover::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.4);
+}
+
+.xterm-viewport:hover {
+  scrollbar-color: rgba(100, 116, 139, 0.4) transparent;
+}
+
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: rgba(100, 100, 100, 0.5) transparent;
+}
+
+/* Streaming text fade-in per chunk */
+@keyframes stream-in-steps {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stream-in-text {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.streaming-steps {
+  animation: stream-in-steps 0.15s ease-out forwards;
+}
+
+.streaming-text {
+  animation: stream-in-text 0.15s ease-out forwards;
+}
+
+@keyframes sweep {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.sweep-text {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.5) 40%,
+    rgba(255, 255, 255, 1) 50%,
+    rgba(255, 255, 255, 0.5) 60%,
+    rgba(255, 255, 255, 0.5) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sweep 2.5s linear infinite;
 }

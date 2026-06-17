@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../ui/button';
 import { Textarea } from '../../ui/TextArea';
@@ -9,12 +8,17 @@ export const PromptSection = () => {
   const [prompt, setPrompt] = useState('');
   const navigate = useNavigate();
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (prompt.trim()) {
-      // Store prompt in sessionStorage for use in chat page
-      sessionStorage.setItem('userPrompt', prompt);
-      navigate('/chat');
+      navigate('/chat', { state: { prompt } });
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 
@@ -45,6 +49,7 @@ export const PromptSection = () => {
               <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder="E.g., Create a modern e-commerce website for selling handmade jewelry with a clean, elegant design..."
                 className="min-h-[200px] text-lg bg-white/5 border-white/10 backdrop-blur-xl text-white placeholder:text-gray-500 focus:border-blue-500/50 focus:ring-blue-500/20 resize-none transition-all duration-300"
               />

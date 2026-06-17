@@ -11,9 +11,9 @@ interface FileExplorerProps {
 export function FileExplorer({ files, selectedFile, onFileSelect }: FileExplorerProps) {
   if (files.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center bg-slate-900/50">
+      <div className="h-full flex items-center justify-center">
         <div className="text-center px-6 py-8">
-          <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <FileIcon className="w-8 h-8 text-slate-600" />
           </div>
           <p className="text-sm text-slate-500">No files yet</p>
@@ -24,7 +24,7 @@ export function FileExplorer({ files, selectedFile, onFileSelect }: FileExplorer
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-slate-900/50">
+    <div className="h-full overflow-y-auto">
       <div className="p-3">
         <FileTree
           nodes={files}
@@ -113,8 +113,8 @@ function FileNode({ node, selectedFile, onFileSelect, level }: FileNodeProps) {
         onClick={handleClick}
         className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-all ${
           isSelected
-            ? 'bg-emerald-500/20 text-emerald-300'
-            : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+            ? 'bg-blue-500/20 text-blue-300'
+            : 'text-slate-400 hover:bg-blue-800 hover:text-slate-200'
         }`}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
       >

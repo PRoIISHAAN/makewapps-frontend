@@ -1,24 +1,36 @@
 import { useRef, useState } from 'react';
-import { Monitor, Smartphone, ExternalLink, RefreshCw } from 'lucide-react';
+import { Monitor } from 'lucide-react';
 
 type DeviceMode = 'desktop' | 'mobile';
 
-export function Preview({ viewmode, url }: { viewmode: string; url: string }) {
+export function Preview({ viewmode, url, key, isGenerating }: { viewmode: string; url: string; key: number; isGenerating: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
-  const [key, setKey] = useState(0);
 
-  if (!url) {
+  if (!url && !isGenerating) {
     return (
-      <div className={`h-full flex items-center justify-center bg-slate-900 ${viewmode === "preview" ? "block" : "hidden"}`}>
+      <div className={`h-full flex items-center justify-center ${viewmode === "preview" ? "block" : "hidden"}`}>
         <div className="text-center px-8">
-          <div className="w-20 h-20 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto mb-5">
-            <Monitor className="w-10 h-10 text-slate-600" />
+          <div className="w-20 h-20 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-5">
+            <Monitor className="w-10 h-10 text-white/20" />
           </div>
-          <p className="text-slate-400 text-lg font-medium">No preview available</p>
-          <p className="text-slate-600 text-sm mt-2">
+          <p className="text-white/50 text-lg font-medium">No preview available</p>
+          <p className="text-white/20 text-sm mt-2">
             Generate a website to see the preview
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  else if( isGenerating){
+    return (
+      <div className={`h-full flex items-center justify-center ${viewmode === "preview" ? "block" : "hidden"}`}>
+        <div className="text-center px-8">
+          <div className="w-20 h-20 rounded-2xl bg-white/5 flex items-center justify-center mx-auto mb-5">
+            <Monitor className="w-10 h-10 text-white/20" />
+          </div>
+          <p className="sweep-text text-lg font-medium">Your Preview will appear Here</p>
         </div>
       </div>
     );
@@ -33,14 +45,10 @@ export function Preview({ viewmode, url }: { viewmode: string; url: string }) {
     }
   };
 
-  const handleOpenInNewTab = () => {
-    window.open(url, '_blank');
-  };
-
   return (
-    <div className={`h-full flex flex-col bg-slate-900 overflow-hidden ${viewmode === "preview" ? "block" : "hidden"} `}>
-      {/* Toolbar */}
-      <div className="h-12 bg-slate-800/70 border-b border-slate-700/50 flex items-center justify-between px-4 flex-shrink-0">
+    <div className={`h-full flex flex-col overflow-hidden ${viewmode === "preview" ? "block" : "hidden"} `}>
+      {/* Toolbar feature addition for future */}
+      {/* <div className="h-12 bg-slate-800/70 border-b border-slate-700/50 flex items-center justify-between px-4 flex-shrink-0">
         <div className="flex items-center gap-1 bg-slate-700/50 rounded-lg p-1">
           <button
             onClick={() => setDeviceMode('desktop')}
@@ -65,29 +73,12 @@ export function Preview({ viewmode, url }: { viewmode: string; url: string }) {
             <Smartphone className="w-4 h-4" />
           </button>
         </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setKey((k) => k + 1)}
-            className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
-            title="Refresh preview"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleOpenInNewTab}
-            className="p-2 rounded-md text-slate-400 hover:text-white hover:bg-slate-700 transition-all"
-            title="Open in new tab"
-          >
-            <ExternalLink className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      </div> */}
 
       {/* Preview Area */}
-      <div className="flex-1 overflow-auto bg-slate-800/30 p-4">
+      <div className="flex-1 overflow-auto">
         <div
-          className="mx-auto h-full transition-all duration-300 rounded-lg overflow-hidden shadow-2xl border border-slate-700/50"
+          className="mx-auto h-full transition-all duration-300 rounded-lg overflow-hidden"
           style={{ width: getDeviceWidth() }}
         >
           <iframe
