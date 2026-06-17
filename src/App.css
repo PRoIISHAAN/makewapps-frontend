@@ -153,21 +153,23 @@ html {
   }
 }
 
-@keyframes stream-in-text {
+@keyframes stream-text {
   from {
-    opacity: 0;
+    opacity: 0.7;
+    transform: translateY(2px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
   }
+}
+
+.streaming-text {
+  animation: stream-text 250ms ease-out;
 }
 
 .streaming-steps {
   animation: stream-in-steps 0.15s ease-out forwards;
-}
-
-.streaming-text {
-  animation: stream-in-text 0.15s ease-out forwards;
 }
 
 @keyframes sweep {

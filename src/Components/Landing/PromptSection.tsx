@@ -1,17 +1,18 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Button } from '../../ui/button';
-import { Textarea } from '../../ui/TextArea';
-import { Send, Sparkles } from 'lucide-react';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Button } from "../../ui/button";
+import { Textarea } from "../../ui/TextArea";
+import { Send, Sparkles } from "lucide-react";
 
 export const PromptSection = () => {
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState("");
   const navigate = useNavigate();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (prompt.trim()) {
-      navigate('/chat', { state: { prompt } });
+      sessionStorage.removeItem("chat-session");
+      navigate("/chat", { state: { prompt } });
     }
   };
 
@@ -23,19 +24,24 @@ export const PromptSection = () => {
   };
 
   return (
-    <section id="prompt-section" className="relative py-32 bg-gradient-to-b from-gray-900 to-black">
+    <section
+      id="prompt-section"
+      className="relative py-32 bg-gradient-to-b from-gray-900 to-black"
+    >
       {/* Background effects */}
       <div className="absolute top-1/2 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
       <div className="absolute top-1/2 right-1/4 w-96 h-96 bg-blue-700/10 rounded-full blur-3xl"></div>
-      
+
       <div className="container mx-auto px-6 relative z-10">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
             <div className="inline-flex items-center space-x-2 px-4 py-2 rounded-full bg-gradient-to-r from-blue-500/20 to-blue-700/20 border border-blue-500/30 mb-6">
               <Sparkles className="w-4 h-4 text-blue-400" />
-              <span className="text-sm text-blue-300 font-medium">Start Building Now</span>
+              <span className="text-sm text-blue-300 font-medium">
+                Start Building Now
+              </span>
             </div>
-            
+
             <h2 className="text-5xl md:text-6xl font-bold text-white mb-6">
               Describe Your Vision
             </h2>
@@ -43,7 +49,7 @@ export const PromptSection = () => {
               Tell us what you want to build, and our AI will bring it to life
             </p>
           </div>
-          
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="relative group">
               <Textarea
@@ -53,13 +59,13 @@ export const PromptSection = () => {
                 placeholder="E.g., Create a modern e-commerce website for selling handmade jewelry with a clean, elegant design..."
                 className="min-h-[200px] text-lg bg-white/5 border-white/10 backdrop-blur-xl text-white placeholder:text-gray-500 focus:border-blue-500/50 focus:ring-blue-500/20 resize-none transition-all duration-300"
               />
-              
+
               {/* Character count */}
               <div className="absolute bottom-4 right-4 text-sm text-gray-500">
                 {prompt.length} characters
               </div>
             </div>
-            
+
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Button
                 type="submit"
@@ -70,22 +76,24 @@ export const PromptSection = () => {
                 Generate Website
                 <Send className="ml-2 w-5 h-5" />
               </Button>
-              
+
               <p className="text-sm text-gray-500">
                 Free trial • No credit card required
               </p>
             </div>
           </form>
-          
+
           {/* Example prompts */}
           <div className="mt-12">
-            <p className="text-sm text-gray-500 mb-4 text-center">Try these examples:</p>
+            <p className="text-sm text-gray-500 mb-4 text-center">
+              Try these examples:
+            </p>
             <div className="flex flex-wrap justify-center gap-3">
               {[
                 "Portfolio website for a photographer",
                 "Restaurant landing page with menu",
                 "Tech startup homepage",
-                "Personal blog with dark theme"
+                "Personal blog with dark theme",
               ].map((example, index) => (
                 <button
                   key={index}

@@ -1,5 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { WebContainer } from "@webcontainer/api";
+// Add import at top of ChatPage.tsx
+import { fetchAndExtractNodeModulesSnapshot } from "../utils/snapshotInstaller.ts";
 import {
   type Step,
   type FileMessage,
@@ -7,6 +9,7 @@ import {
   StepType,
 } from "../types/types.ts";
 import JSZip from "jszip";
+import type { FileSystemTree } from "@webcontainer/api";
 import { ChatPanel } from "../Components/Chat/ChatPanel";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -29,10 +32,17 @@ import { StreamingXmlParser } from "../utils/utils.ts";
 import { useLocation } from "react-router-dom";
 import { Queue } from "../utils/Queue.ts";
 import * as Diff from "diff";
+type ChatSession = {
+  messages: FileMessage[];
+  files: FileTreeNode[];
+  selectedFile: string | null;
+  userPrompts: string[];
+  llmFileContents: Record<string, string>;
+  viewMode: "code" | "preview";
+};
 
 export function ChatPage() {
   const location = useLocation();
-  const { prompt } = location.state as { prompt: string };
   const [iFrameUrl, setIframeUrl] = useState("");
   const [, setTitle] = useState("");
   const userPromptsRef = useRef<string[]>([]);
@@ -73,6 +83,43 @@ export function ChatPage() {
     isRenderingRef.current = false;
   };
 
+  const fileTreeToMountTree = (nodes: FileTreeNode[]): FileSystemTree => {
+    const result: FileSystemTree = {};
+
+    for (const node of nodes) {
+      if (node.type === "folder") {
+        result[node.name] = {
+          directory: fileTreeToMountTree(node.children ?? []),
+        };
+      }
+
+      if (node.type === "file") {
+        result[node.name] = {
+          file: {
+            contents: node.content ?? "",
+          },
+        };
+      }
+    }
+
+    return result;
+  };
+
+  const rebuildWebContainer = async (files: FileTreeNode[]) => {
+    const instance = await WebContainer.boot();
+    webcontainerRef.current = instance;
+
+    initTerminal();
+    spawnShell();
+
+    const mountTree = fileTreeToMountTree(files);
+    await instance.mount(mountTree);
+
+    // Re-install deps on session restore using snapshot
+    await npmInstall(); // will auto-use snapshotUrl from sessionStorage
+
+    return instance;
+  };
   const buildFileModifications = (): string => {
     const modifiedFiles: string[] = [];
 
@@ -118,6 +165,35 @@ export function ChatPage() {
   };
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
+
+  const saveSession = () => {
+    const session: ChatSession = {
+      messages,
+      files: filesRef.current,
+      selectedFile,
+      userPrompts: userPromptsRef.current,
+      llmFileContents: llmFileContentsRef.current,
+      viewMode,
+    };
+
+    sessionStorage.setItem("chat-session", JSON.stringify(session));
+  };
+  const restoreSession = (raw: string) => {
+    const session: ChatSession = JSON.parse(raw);
+
+    setMessages(session.messages ?? []);
+
+    setFiles(session.files ?? []);
+    filesRef.current = session.files ?? [];
+
+    setSelectedFile(session.selectedFile ?? null);
+
+    userPromptsRef.current = session.userPrompts ?? [];
+
+    llmFileContentsRef.current = session.llmFileContents ?? {};
+
+    setViewMode(session.viewMode ?? "preview");
+  };
 
   const handleDownload = async () => {
     const zip = new JSZip();
@@ -206,20 +282,90 @@ export function ChatPage() {
     return terminal;
   };
 
+  async function getPackagesToInstall(
+  // keys are "node_modules/foo" or "node_modules/@scope/foo"
+  snapshotPackageLock: Record<string, { version: string }>,
+  webcontainer: WebContainer
+): Promise<string[]> {
+  let currentPackageJson: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+
+  try {
+    const bytes = await webcontainer.fs.readFile("package.json");
+    currentPackageJson = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return []; // no package.json — nothing to do
+  }
+
+  const allRequested = {
+    ...currentPackageJson.dependencies,
+    ...currentPackageJson.devDependencies,
+  };
+
+  const missing: string[] = [];
+
+  for (const [pkg, requestedRange] of Object.entries(allRequested)) {
+    const lockKey = `node_modules/${pkg}`;
+    const installed = snapshotPackageLock[lockKey];
+
+    if (!installed) {
+      // Package not in snapshot at all
+      missing.push(`${pkg}@${requestedRange}`);
+    }
+    // If it IS in the snapshot we trust npm's semver resolution already satisfied
+    // the range that was used to build the snapshot. If the project bumped to a
+    // range the snapshot can't satisfy, npm install <pkg@range> will catch it.
+  }
+
+  return missing;
+}
+
   const npmInstall = async () => {
-    if (webcontainerRef.current) {
+  if (!webcontainerRef.current) return;
+
+  const snapshotUrl = sessionStorage.getItem("snapshotUrl");
+
+  if (snapshotUrl) {
+    const result = await fetchAndExtractNodeModulesSnapshot(
+      snapshotUrl,
+      webcontainerRef.current,
+      (msg) => xtermRef.current?.writeln(`\r\n\x1b[36m[snapshot] ${msg}\x1b[0m`)
+    );
+
+    if (result.success) {
+      const extraPackages = await getPackagesToInstall(
+        result.snapshotPackageLock,
+        webcontainerRef.current
+      );
+
+      if (extraPackages.length === 0) {
+        xtermRef.current?.writeln(
+          "\r\n\x1b[36m[snapshot] Dependencies up to date — skipping npm install\x1b[0m"
+        );
+        return;
+      }
+
+      xtermRef.current?.writeln(
+        `\r\n\x1b[33m[npm] Installing new packages: ${extraPackages.join(", ")}\x1b[0m`
+      );
       const terminal = xtermRef.current;
-      const process = await webcontainerRef.current.spawn("npm", ["install"]);
+      const process = await webcontainerRef.current.spawn("npm", ["install", ...extraPackages]);
       process.output.pipeTo(
-        new WritableStream({
-          write(data) {
-            terminal?.write(data);
-          },
-        }),
+        new WritableStream({ write(data) { terminal?.write(data); } })
       );
       await process.exit;
+      return;
     }
-  };
+  }
+
+  // Full fallback
+  xtermRef.current?.writeln("\r\n\x1b[33m[npm] Running npm install...\x1b[0m");
+  const terminal = xtermRef.current;
+  const process = await webcontainerRef.current.spawn("npm", ["install"]);
+  process.output.pipeTo(
+    new WritableStream({ write(data) { terminal?.write(data); } })
+  );
+  await process.exit;
+};
 
   const npmRun = async (script: string) => {
     if (webcontainerRef.current) {
@@ -250,7 +396,9 @@ export function ChatPage() {
   const stepsQueueRef = useRef(new Queue<Step>());
   const assistantMessageIdRef = useRef<string | null>(null);
   const assistantNarrationRef = useRef<string>("");
-
+  useEffect(() => {
+    saveSession();
+  }, [messages, files, selectedFile, viewMode]);
   const ensureAssistantMessage = () => {
     if (assistantMessageIdRef.current) return;
 
@@ -329,12 +477,11 @@ export function ChatPage() {
       console.log("Running command:", step.code);
       for (const code of step.code.split("&&")) {
         const [cmd, ...args] = code.trim().split(" ");
-        if (
-          (args[0] === "run" || args[0] === "start") &&
-          runCommandRef.current === false
-        ) {
-          runCommandRef.current = true;
-          await npmRun(args[1] ?? args[0]);
+        if (args[0] === "run" || args[0] === "start") {
+          if (runCommandRef.current === false) {
+            runCommandRef.current = true;
+            await npmRun(args[1] ?? args[0]);
+          }
           setViewMode("preview");
           return;
         }
@@ -432,6 +579,7 @@ export function ChatPage() {
 
     if (stepsRef.current.length === 0 && filesRef.current.length === 0) {
       const templateApiResponse = await generateSteps(content);
+      sessionStorage.setItem("snapshotUrl", templateApiResponse.snapshotUrl);
       const templateSteps = templateApiResponse.steps;
       userPromptsRef.current = [
         ...userPromptsRef.current,
@@ -561,10 +709,27 @@ export function ChatPage() {
     setIsGenerating(false);
   };
   useEffect(() => {
+    const saved = sessionStorage.getItem("chat-session");
+
+    if (saved) {
+      const session = JSON.parse(saved);
+
+      restoreSession(saved);
+
+      void rebuildWebContainer(session.files);
+
+      return;
+    }
+
+    const prompt = location.state?.prompt;
+
     if (prompt) {
       handleSendMessage(prompt);
+
+      window.history.replaceState({}, "");
     }
   }, []);
+
   const handleFileSelect = useCallback((path: string) => {
     setViewMode("code");
     setSelectedFile(path);
@@ -728,7 +893,7 @@ export function ChatPage() {
               isGenerating={isGenerating}
               viewmode={viewMode}
               url={iFrameUrl}
-              key={iFrameKey}
+              iFrameKey={iFrameKey}
             />
           </div>
         </Panel>

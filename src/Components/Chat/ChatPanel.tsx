@@ -50,7 +50,8 @@ export function ChatPanel({
               }`}
             >
               <div
-                className={`max-w-[95%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+              key={message.content.length}
+                className={`max-w-[95%] px-4 py-3 rounded-2xl text-sm streaming-text leading-relaxed ${
                   message.role === "user"
                     ? "bg-gray-600/40 text-white"
                     : ""

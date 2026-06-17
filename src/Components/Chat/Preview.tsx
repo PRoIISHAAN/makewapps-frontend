@@ -3,7 +3,7 @@ import { Monitor } from 'lucide-react';
 
 type DeviceMode = 'desktop' | 'mobile';
 
-export function Preview({ viewmode, url, key, isGenerating }: { viewmode: string; url: string; key: number; isGenerating: boolean }) {
+export function Preview({ viewmode, url, iFrameKey, isGenerating }: { viewmode: string; url: string; iFrameKey: number; isGenerating: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
 
@@ -83,7 +83,7 @@ export function Preview({ viewmode, url, key, isGenerating }: { viewmode: string
         >
           <iframe
             src={url}
-            key={key}
+            key={iFrameKey}
             ref={iframeRef}
             title="Preview"
             className="w-full h-full bg-white"
