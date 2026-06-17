@@ -1,13 +1,19 @@
-import { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Monitor } from 'lucide-react';
 
 type DeviceMode = 'desktop' | 'mobile';
 
-export function Preview({ viewmode, url, iFrameKey, isGenerating }: { viewmode: string; url: string; iFrameKey: number; isGenerating: boolean }) {
+export function Preview({ viewmode, url, iFrameKey, isGenerating, sweepAnimation, setSweepAnimation }: { viewmode: string; url: string; iFrameKey: number; isGenerating: boolean, sweepAnimation: boolean, setSweepAnimation: React.Dispatch<React.SetStateAction<boolean>> }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
 
-  if (!url && !isGenerating) {
+  useEffect(()=>{
+    if(isGenerating){
+      setSweepAnimation(true);
+    }
+  },[isGenerating]);
+
+  if (!url && !sweepAnimation) {
     return (
       <div className={`h-full flex items-center justify-center ${viewmode === "preview" ? "block" : "hidden"}`}>
         <div className="text-center px-8">
@@ -23,7 +29,7 @@ export function Preview({ viewmode, url, iFrameKey, isGenerating }: { viewmode: 
     );
   }
 
-  else if( isGenerating){
+  else if( sweepAnimation && !url){
     return (
       <div className={`h-full flex items-center justify-center ${viewmode === "preview" ? "block" : "hidden"}`}>
         <div className="text-center px-8">

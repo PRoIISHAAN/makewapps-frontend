@@ -60,8 +60,8 @@ export const features = [
   },
   {
     id: 3,
-    title: "One-Click Deployment",
-    description: "Go from concept to live website in minutes. Deploy your AI-generated site with a single click and share it with the world.",
+    title: "One-Click Download",
+    description: "Go from concept to live website in minutes. Download your AI-generated site with a single click and share it with the world.",
     icon: "Rocket"
   }
 ];

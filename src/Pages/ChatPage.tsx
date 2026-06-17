@@ -39,6 +39,7 @@ type ChatSession = {
   userPrompts: string[];
   llmFileContents: Record<string, string>;
   viewMode: "code" | "preview";
+  runScript : string;
 };
 
 export function ChatPage() {
@@ -47,8 +48,10 @@ export function ChatPage() {
   const [, setTitle] = useState("");
   const userPromptsRef = useRef<string[]>([]);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [sweepAnimation, setSweepAnimation] = useState(false);
   const editorref = useRef<any>(null);
   const runCommandRef = useRef<Boolean>(false);
+  const runScriptRef = useRef<string>("");
   const ApplyingToFileTreeRef = useRef(false);
   const llmFileContentsRef = useRef<Record<string, string>>({});
   const webcontainerRef = useRef<WebContainer | null>(null);
@@ -56,6 +59,20 @@ export function ChatPage() {
   const [iFrameKey, setIFrameKey] = useState(0);
   const renderQueueRef = useRef<string[]>([]);
   const isRenderingRef = useRef(false);
+  const stepsRef = useRef<Step[]>([]);
+  const [files, setFiles] = useState<FileTreeNode[]>([]);
+  const filesRef = useRef<FileTreeNode[]>([]);
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const selectedFileRef = useRef<string | null>(null);
+  const [viewMode, setViewMode] = useState<"code" | "preview">("preview");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const stepsQueueRef = useRef(new Queue<Step>());
+  const assistantMessageIdRef = useRef<string | null>(null);
+  const assistantNarrationRef = useRef<string>("");
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const isApplyingCompleteRef = useRef(false);
+  const pendingApplyCompleteRef = useRef(false);
   const sleep = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -106,7 +123,7 @@ export function ChatPage() {
   };
 
   const rebuildWebContainer = async (files: FileTreeNode[]) => {
-    console.log("Rebuilding WebContainer with new file tree...");
+setSweepAnimation(true);
     const instance = await WebContainer.boot();
     webcontainerRef.current = instance;
 
@@ -116,6 +133,7 @@ export function ChatPage() {
     const mountTree = fileTreeToMountTree(files);
     await instance.mount(mountTree);
     await npmInstall();
+    npmRun(runScriptRef.current)
 
     return instance;
   };
@@ -162,8 +180,6 @@ export function ChatPage() {
     if (modifiedFiles.length === 0) return "";
     return `<fileModifications>\n${modifiedFiles.join("\n")}\n</fileModifications>`;
   };
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<Terminal | null>(null);
 
   const saveSession = () => {
     const session: ChatSession = {
@@ -173,6 +189,7 @@ export function ChatPage() {
       userPrompts: userPromptsRef.current,
       llmFileContents: llmFileContentsRef.current,
       viewMode,
+      runScript : runScriptRef.current
     };
 
     sessionStorage.setItem("chat-session", JSON.stringify(session));
@@ -190,6 +207,8 @@ export function ChatPage() {
     userPromptsRef.current = session.userPrompts ?? [];
 
     llmFileContentsRef.current = session.llmFileContents ?? {};
+
+    runScriptRef.current = session.runScript
 
     setViewMode(session.viewMode ?? "preview");
   };
@@ -282,7 +301,6 @@ export function ChatPage() {
   };
 
   async function getPackagesToInstall(
-  // keys are "node_modules/foo" or "node_modules/@scope/foo"
   snapshotPackageLock: Record<string, { version: string }>,
   webcontainer: WebContainer
 ): Promise<string[]> {
@@ -292,7 +310,7 @@ export function ChatPage() {
     const bytes = await webcontainer.fs.readFile("package.json");
     currentPackageJson = JSON.parse(new TextDecoder().decode(bytes));
   } catch {
-    return []; // no package.json — nothing to do
+    return [];
   }
 
   const allRequested = {
@@ -356,6 +374,7 @@ export function ChatPage() {
   const npmRun = async (script: string) => {
     if (webcontainerRef.current) {
       const terminal = xtermRef.current;
+      runScriptRef.current = script;
       const process = await webcontainerRef.current.spawn("npm", [
         "run",
         script,
@@ -372,16 +391,26 @@ export function ChatPage() {
       });
     }
   };
-  const stepsRef = useRef<Step[]>([]);
-  const [files, setFiles] = useState<FileTreeNode[]>([]);
-  const filesRef = useRef<FileTreeNode[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const selectedFileRef = useRef<string | null>(null);
-  const [viewMode, setViewMode] = useState<"code" | "preview">("preview");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const stepsQueueRef = useRef(new Queue<Step>());
-  const assistantMessageIdRef = useRef<string | null>(null);
-  const assistantNarrationRef = useRef<string>("");
+  useEffect(() => {
+    const saved = sessionStorage.getItem("chat-session");
+
+    if (saved && JSON.parse(saved).files.length > 0) {
+      const session = JSON.parse(saved);
+
+      restoreSession(saved);
+      void rebuildWebContainer(session.files);
+
+      return;
+    }
+
+    const prompt = location.state?.prompt;
+
+    if (prompt) {
+      handleSendMessage(prompt);
+
+      window.history.replaceState({}, "");
+    }
+  }, []);
   useEffect(() => {
     saveSession();
   }, [messages, files, selectedFile, viewMode]);
@@ -443,9 +472,6 @@ export function ChatPage() {
       return node;
     });
   }
-
-  const isApplyingCompleteRef = useRef(false);
-  const pendingApplyCompleteRef = useRef(false);
 
   const runStep = async (step: Step) => {
     if (step.type === StepType.Composite) {
@@ -695,27 +721,6 @@ export function ChatPage() {
     setIsGenerating(false);
   };
 
-  useEffect(() => {
-    const saved = sessionStorage.getItem("chat-session");
-
-    if (saved && JSON.parse(saved).files.length > 0) {
-      const session = JSON.parse(saved);
-
-      restoreSession(saved);
-      void rebuildWebContainer(session.files);
-
-      return;
-    }
-
-    const prompt = location.state?.prompt;
-
-    if (prompt) {
-      handleSendMessage(prompt);
-
-      window.history.replaceState({}, "");
-    }
-  }, []);
-
   const handleFileSelect = useCallback((path: string) => {
     setViewMode("code");
     setSelectedFile(path);
@@ -876,6 +881,8 @@ export function ChatPage() {
             className={`${viewMode === "preview" ? "block" : "hidden"} h-full`}
           >
             <Preview
+            sweepAnimation={sweepAnimation}
+            setSweepAnimation={setSweepAnimation}
               isGenerating={isGenerating}
               viewmode={viewMode}
               url={iFrameUrl}
