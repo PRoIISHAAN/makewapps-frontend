@@ -1,11 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Monitor } from 'lucide-react';
-
-type DeviceMode = 'desktop' | 'mobile';
 
 export function Preview({ viewmode, url, iFrameKey, isGenerating, sweepAnimation, setSweepAnimation }: { viewmode: string; url: string; iFrameKey: number; isGenerating: boolean, sweepAnimation: boolean, setSweepAnimation: React.Dispatch<React.SetStateAction<boolean>> }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
 
   useEffect(()=>{
     if(isGenerating){
@@ -42,15 +39,6 @@ export function Preview({ viewmode, url, iFrameKey, isGenerating, sweepAnimation
     );
   }
 
-  const getDeviceWidth = () => {
-    switch (deviceMode) {
-      case 'desktop':
-        return '100%';
-      case 'mobile':
-        return '375px';
-    }
-  };
-
   return (
     <div className={`h-full flex flex-col overflow-hidden ${viewmode === "preview" ? "block" : "hidden"} `}>
       {/* Toolbar feature addition for future */}
@@ -85,7 +73,7 @@ export function Preview({ viewmode, url, iFrameKey, isGenerating, sweepAnimation
       <div className="flex-1 overflow-auto">
         <div
           className="mx-auto h-full transition-all duration-300 rounded-lg overflow-hidden"
-          style={{ width: getDeviceWidth() }}
+          style={{ width: "100%" }}
         >
           <iframe
             src={url}
