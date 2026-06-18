@@ -1,1 +1,1 @@
-export const BACKEND_URL = "http://api.wapps.iishaan.app"
+export const BACKEND_URL = "https://api.wapps.iishaan.app"
