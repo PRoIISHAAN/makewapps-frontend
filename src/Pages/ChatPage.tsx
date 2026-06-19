@@ -32,6 +32,8 @@ import { StreamingXmlParser } from "../utils/utils.ts";
 import { useLocation } from "react-router-dom";
 import { Queue } from "../utils/Queue.ts";
 import * as Diff from "diff";
+import { toast } from "sonner";
+import axios, { AxiosError } from "axios";
 type ChatSession = {
   messages: FileMessage[];
   files: FileTreeNode[];
@@ -196,6 +198,13 @@ export function ChatPage() {
   };
   const restoreSession = (raw: string) => {
     const session: ChatSession = JSON.parse(raw);
+    session.messages = session.messages.map((msg) => ({
+      ...msg,
+      steps: msg.steps?.map((step) => ({
+        ...step,
+        status: step.status !== "completed" ? "error" : step.status,
+      })),
+    }));
 
     setMessages(session.messages ?? []);
 
@@ -446,6 +455,7 @@ export function ChatPage() {
   };
 
   const updateSteps = (newSteps: Step[]) => {
+    ensureAssistantMessage();
     stepsRef.current = newSteps;
 
     setMessages((prev) =>
@@ -506,7 +516,10 @@ export function ChatPage() {
           if (runCommandRef.current === false) {
             runCommandRef.current = true;
             await npmRun(args[1] ?? args[0]);
+            setViewMode("preview");
+            return;
           }
+          setIFrameKey((k) => k + 1);
           setViewMode("preview");
           return;
         }
@@ -601,137 +614,162 @@ export function ChatPage() {
 
     setIsGenerating(true);
     stepsRef.current = [];
+    try {
+      if (stepsRef.current.length === 0 && filesRef.current.length === 0) {
+        const templateApiResponse = await generateSteps(content);
+        sessionStorage.setItem("snapshotUrl", templateApiResponse.snapshotUrl);
+        const templateSteps = templateApiResponse.steps;
+        userPromptsRef.current = [
+          ...userPromptsRef.current,
+          ...templateApiResponse.prompts,
+        ];
+        updateSteps(templateSteps);
 
-    if (stepsRef.current.length === 0 && filesRef.current.length === 0) {
-      const templateApiResponse = await generateSteps(content);
-      sessionStorage.setItem("snapshotUrl", templateApiResponse.snapshotUrl);
-      const templateSteps = templateApiResponse.steps;
-      userPromptsRef.current = [
-        ...userPromptsRef.current,
-        ...templateApiResponse.prompts,
-      ];
-      updateSteps(templateSteps);
-
-      await applyCompleted(stepsRef.current);
-      for (const step of stepsRef.current) {
-        if (step.path && step.code) {
-          llmFileContentsRef.current[step.path] = step.code;
+        await applyCompleted(stepsRef.current);
+        for (const step of stepsRef.current) {
+          if (step.path && step.code) {
+            llmFileContentsRef.current[step.path] = step.code;
+          }
         }
       }
-    }
 
-    const nextStepId =
-      stepsRef.current.length > 0 ? stepsRef.current.length + 1 : 1;
+      const nextStepId =
+        stepsRef.current.length > 0 ? stepsRef.current.length + 1 : 1;
 
-    const parser = new StreamingXmlParser(
-      nextStepId,
-      async (step) => {
-        console.log("New step received:", step);
-        updateSteps([...stepsRef.current, step]);
-        if (
-          (step.type === StepType.CreateFile ||
-            step.type === StepType.CreateFolder) &&
-          webcontainerRef.current
-        ) {
-          stepsQueueRef.current.enqueue(step);
-          if (ApplyingToFileTreeRef.current) return; // avoid concurrent modifications to file tree
-          while (!stepsQueueRef.current.isEmpty) {
-            ApplyingToFileTreeRef.current = true;
-            const step = stepsQueueRef.current.dequeue();
-            await applyStepToFileTree(
-              filesRef,
-              setFiles,
-              step as Step,
-              webcontainerRef.current,
-            );
-            if (step?.path) {
-              selectedFileRef.current = step.path;
-              setSelectedFile(selectedFileRef.current);
+      const parser = new StreamingXmlParser(
+        nextStepId,
+        async (step) => {
+          console.log("New step received:", step);
+          updateSteps([...stepsRef.current, step]);
+          if (
+            (step.type === StepType.CreateFile ||
+              step.type === StepType.CreateFolder) &&
+            webcontainerRef.current
+          ) {
+            stepsQueueRef.current.enqueue(step);
+            if (ApplyingToFileTreeRef.current) return; // avoid concurrent modifications to file tree
+
+            try {
+              while (!stepsQueueRef.current.isEmpty) {
+                ApplyingToFileTreeRef.current = true;
+                const step = stepsQueueRef.current.dequeue();
+                await applyStepToFileTree(
+                  filesRef,
+                  setFiles,
+                  step as Step,
+                  webcontainerRef.current,
+                );
+                if (step?.path) {
+                  selectedFileRef.current = step.path;
+                  setSelectedFile(selectedFileRef.current);
+                }
+                setViewMode("code");
+              }
+            } finally {
+              ApplyingToFileTreeRef.current = false;
             }
-            setViewMode("code");
           }
-          ApplyingToFileTreeRef.current = false;
-        }
-      },
-      (stepId, code) => {
-        updateSteps(
-          stepsRef.current.map((s) => (s.id === stepId ? { ...s, code } : s)),
-        );
-
-        const step = stepsRef.current.find((s) => s.id === stepId);
-        if (step?.path) {
-          llmFileContentsRef.current[step.path] = code;
-          const nextFiles = updateFileContent(
-            filesRef.current,
-            step.path,
-            code,
+        },
+        (stepId, code) => {
+          updateSteps(
+            stepsRef.current.map((s) => (s.id === stepId ? { ...s, code } : s)),
           );
-          filesRef.current = nextFiles;
-          setFiles(nextFiles);
+
+          const step = stepsRef.current.find((s) => s.id === stepId);
+          if (step?.path) {
+            llmFileContentsRef.current[step.path] = code;
+            const nextFiles = updateFileContent(
+              filesRef.current,
+              step.path,
+              code,
+            );
+            filesRef.current = nextFiles;
+            setFiles(nextFiles);
+          }
+        },
+        (id) => {
+          updateSteps(
+            stepsRef.current.map((s) =>
+              s.id === id ? { ...s, status: "pending" } : s,
+            ),
+          );
+          applyCompleted(stepsRef.current);
+        },
+        (text) => {
+          const tokens = text.match(/\S+\s*/g) || [];
+
+          renderQueueRef.current.push(...tokens);
+
+          void startWordRenderer();
+        },
+        setTitle,
+      );
+      const fileModifications = buildFileModifications();
+      const userMessageContent = fileModifications
+        ? `${fileModifications}\n\n${content}`
+        : content;
+      const response = await fetch(`${BACKEND_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompts: [
+            ...userPromptsRef.current,
+            filesRef.current.length > 0
+              ? `current file tree: ${JSON.stringify(filesRef.current)}`
+              : "",
+            userMessageContent,
+          ].filter(Boolean),
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Chat request failed with status ${response.status}`);
+      }
+
+      if (!response.body) {
+        console.error("No response body — is the backend streaming?");
+        setIsGenerating(false);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let fullText = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        let chunkText = decoder.decode(value, { stream: true });
+        fullText += chunkText;
+        if (fullText.includes("[[STREAM_ERROR]]")) {
+          throw new Error(
+            "The AI model is currently overloaded. Please try again shortly.",
+          );
         }
-      },
-      (id) => {
-        const step = stepsRef.current.find((s) => s.id === id);
-        if (
-          step?.type === StepType.RunScript &&
-          step.code &&
-          runCommandRef.current === true &&
-          (step.code.trim().startsWith("npm run") ||
-            step.code.trim() === "npm start")
-        ) {
-          return;
-        }
-        updateSteps(
-          stepsRef.current.map((s) =>
-            s.id === id ? { ...s, status: "pending" } : s,
-          ),
-        );
-        applyCompleted(stepsRef.current);
-      },
-      (text) => {
-        const tokens = text.match(/\S+\s*/g) || [];
+        chunkText = chunkText.replace("[[STREAM_ERROR]]", "");
+        parser.feed(chunkText);
+      }
+    } catch (err) {
+      console.error("handleSendMessage error:", err);
+      setSweepAnimation(false);
 
-        renderQueueRef.current.push(...tokens);
+      const message = axios.isAxiosError(err)
+        ? err.response?.status === 503
+          ? "The AI model is temporarily overloaded. Please try again in a moment."
+          : `Request failed (${err.response?.status ?? "network error"}).`
+        : err instanceof Error
+          ? err.message
+          : "Something went wrong while generating your project.";
 
-        void startWordRenderer();
-      },
-      setTitle,
-    );
-    const fileModifications = buildFileModifications();
-    const userMessageContent = fileModifications
-      ? `${fileModifications}\n\n${content}`
-      : content;
-    const response = await fetch(`${BACKEND_URL}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompts: [
-          ...userPromptsRef.current,
-          filesRef.current.length > 0
-            ? `current file tree: ${JSON.stringify(filesRef.current)}`
-            : "",
-          userMessageContent,
-        ].filter(Boolean),
-        messages,
-      }),
-    });
-
-    if (!response.body) {
-      console.error("No response body — is the backend streaming?");
+      toast.error(message);
+    } finally {
       setIsGenerating(false);
-      return;
+      if(runCommandRef.current){
+        setIFrameKey((k) => k + 1);
+        setViewMode("preview");
+      }
     }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parser.feed(decoder.decode(value, { stream: true }));
-    }
-
-    setIsGenerating(false);
   };
 
   const handleFileSelect = useCallback((path: string) => {
@@ -778,13 +816,12 @@ export function ChatPage() {
       <div className="flex justify-between py-1 px-4 pt-2">
         <header>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
-              <Zap className="w-5 h-5 text-white" />
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center">
+              <img src="/favicon.svg" alt="Wapps Logo" />
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-white">Wapps</h1>
-              <p className="text-xs text-slate-400">Create websites with AI</p>
-            </div>
+            <h1 className="text-xl flex items-center font-semibold text-white">
+              Wapps
+            </h1>
           </div>
         </header>
         <header className="flex items-center justify-between border-slate-700/50 flex-shrink-0">
