@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { WebContainer } from "@webcontainer/api";
-// Add import at top of ChatPage.tsx
 import { fetchAndExtractNodeModulesSnapshot } from "../utils/snapshotInstaller.ts";
 import {
   type Step,
@@ -20,7 +19,6 @@ import { generateSteps } from "../utils/fileGenerator";
 import { applyStepToFileTree } from "../utils/fileTree";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import {
-  Zap,
   Eye,
   Code,
   ExternalLink,
@@ -33,7 +31,6 @@ import { useLocation } from "react-router-dom";
 import { Queue } from "../utils/Queue.ts";
 import * as Diff from "diff";
 import { toast } from "sonner";
-import axios, { AxiosError } from "axios";
 type ChatSession = {
   messages: FileMessage[];
   files: FileTreeNode[];
