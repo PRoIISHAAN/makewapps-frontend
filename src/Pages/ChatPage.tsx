@@ -31,6 +31,7 @@ import { useLocation } from "react-router-dom";
 import { Queue } from "../utils/Queue.ts";
 import * as Diff from "diff";
 import { toast } from "sonner";
+import axios from "axios";
 type ChatSession = {
   messages: FileMessage[];
   files: FileTreeNode[];
